@@ -16,7 +16,10 @@ COLLECTION_NAME = "docs"
 EMBED_MODEL_NAME = "BAAI/bge-m3"
 RERANK_MODEL_NAME = "BAAI/bge-reranker-v2-m3"
 CHAT_MODEL_NAME = "mistral"
-ALLOWED_SUFFIXES = {".txt", ".pdf"}
+ALLOWED_SUFFIXES = {
+    ".txt", ".pdf", ".py", ".js", ".ts", ".jsx", ".tsx", 
+    ".html", ".css", ".json", ".md", ".java", ".c", ".cpp", ".h", ".go"
+}
 
 
 def ensure_storage_dirs():
@@ -50,19 +53,22 @@ def normalize_source_name(filename: str) -> str:
     suffix = Path(cleaned).suffix.lower()
 
     if not cleaned or cleaned in {".", ".."}:
-        raise ValueError("\uc720\ud6a8\ud55c \ud30c\uc77c\uba85\uc774 \uc544\ub2d9\ub2c8\ub2e4.")
+        raise ValueError("유효한 파일명이 아닙니다.")
 
     if cleaned != filename.strip():
-        raise ValueError("\ud558\uc704 \uacbd\ub85c\ub098 \ube44\uc815\uc0c1 \ud30c\uc77c \uacbd\ub85c\ub294 \ud5c8\uc6a9\ub418\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4.")
+        raise ValueError("하위 경로나 비정상 파일 경로는 허용되지 않습니다.")
 
     if suffix not in ALLOWED_SUFFIXES:
-        raise ValueError("TXT\uc640 PDF \ud30c\uc77c\ub9cc \uc5c5\ub85c\ub4dc\ud560 \uc218 \uc788\uc2b5\ub2c8\ub2e4.")
+        raise ValueError(f"{suffix} 형식은 지원되지 않습니다.")
 
     return cleaned
 
 
 def read_txt(path: Path) -> str:
-    return path.read_text(encoding="utf-8")
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return path.read_text(encoding="latin-1")
 
 
 def read_pdf(path: Path) -> str:
@@ -73,13 +79,13 @@ def read_pdf(path: Path) -> str:
 def read_document(path: Path) -> str:
     suffix = path.suffix.lower()
 
-    if suffix == ".txt":
-        return read_txt(path)
-
     if suffix == ".pdf":
         return read_pdf(path)
 
-    raise ValueError("\uc9c0\uc6d0\ud558\uc9c0 \uc54a\ub294 \ud30c\uc77c \ud615\uc2dd\uc785\ub2c8\ub2e4.")
+    if suffix in ALLOWED_SUFFIXES:
+        return read_txt(path)
+
+    raise ValueError(f"지원하지 않는 파일 형식입니다: {suffix}")
 
 
 def chunk_text(text: str, size: int = 500, overlap: int = 100) -> list[str]:

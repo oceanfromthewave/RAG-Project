@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from backend.store import DATA_DIR, ensure_storage_dirs, index_document, read_document
+from backend.store import DATA_DIR, ensure_storage_dirs, index_document, read_document, ALLOWED_SUFFIXES
 
 
 def main():
@@ -13,7 +13,7 @@ def main():
         if not path.is_file():
             continue
 
-        if path.suffix.lower() not in {".txt", ".pdf"}:
+        if path.suffix.lower() not in ALLOWED_SUFFIXES:
             continue
 
         text = read_document(path)
