@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import "./App.css";
+import { useAuth } from "./AuthContext";
+import LoginPage from "./LoginPage";
 
 const API_BASE = "http://127.0.0.1:8000";
 
@@ -35,38 +37,19 @@ const TEXT = {
   dragActive: "여기에 파일을 놓으면 바로 인덱싱합니다.",
 };
 
-const readJson = async (response) => {
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.detail || data.message || TEXT.requestFailed);
-  }
-  return data;
-};
-
-const fetchSidebarData = async () => {
-  const [filesRes, statsRes] = await Promise.all([
-    fetch(`${API_BASE}/files-db`),
-    fetch(`${API_BASE}/stats`),
-  ]);
-  const [filesData, statsData] = await Promise.all([readJson(filesRes), readJson(statsRes)]);
-  return { files: filesData.files || [], stats: statsData };
-};
-
-const getExtension = (name) => name.split(".").pop()?.toUpperCase() || "DOC";
-
 const formatScore = (score) => {
   if (score === null || score === undefined) return "-";
   return Number(score).toFixed(4);
 };
+
+const getExtension = (name) => name.split(".").pop()?.toUpperCase() || "DOC";
 
 /* ── Sub-components ───────────────────────────────────────── */
 
 function TypingDots() {
   return (
     <span className="typing-dots" aria-label="입력 중">
-      <span />
-      <span />
-      <span />
+      <span /><span /><span />
     </span>
   );
 }
@@ -76,12 +59,8 @@ function ConfirmModal({ isOpen, title, message, onConfirm, onCancel }) {
   return (
     <div className="modal-backdrop" onClick={onCancel}>
       <div className="modal-container" onClick={e => e.stopPropagation()}>
-        <div className="modal-header">
-          <h3>{title}</h3>
-        </div>
-        <div className="modal-body">
-          <p>{message}</p>
-        </div>
+        <div className="modal-header"><h3>{title}</h3></div>
+        <div className="modal-body"><p>{message}</p></div>
         <div className="modal-footer">
           <button type="button" className="btn-secondary" onClick={onCancel}>취소</button>
           <button type="button" className="btn-danger" onClick={onConfirm}>삭제</button>
@@ -95,28 +74,18 @@ function ToastRegion({ toasts, onDismiss }) {
   return (
     <div className="toast-region" aria-live="polite" aria-atomic="false">
       {toasts.map((t) => (
-        <div 
-          key={t.id} 
-          className={`toast ${t.type} ${t.onClick ? "clickable" : ""}`} 
+        <div
+          key={t.id}
+          className={`toast ${t.type} ${t.onClick ? "clickable" : ""}`}
           role="alert"
-          onClick={() => {
-            if (t.onClick) {
-              t.onClick();
-              onDismiss(t.id);
-            }
-          }}
+          onClick={() => { if (t.onClick) { t.onClick(); onDismiss(t.id); } }}
         >
           <span className="toast-msg">{t.message}</span>
-          <button 
-            className="toast-close" 
-            onClick={(e) => {
-              e.stopPropagation();
-              onDismiss(t.id);
-            }} 
+          <button
+            className="toast-close"
+            onClick={(e) => { e.stopPropagation(); onDismiss(t.id); }}
             aria-label="닫기"
-          >
-            ✕
-          </button>
+          >✕</button>
         </div>
       ))}
     </div>
@@ -126,10 +95,7 @@ function ToastRegion({ toasts, onDismiss }) {
 function MessageCard({ message, isStreaming }) {
   const [copied, setCopied] = useState(false);
   const isUser = message.role === "user";
-  
-  // 스트리밍 중이면서 아직 텍스트가 없고, 검색 중인 상태일 때
   const showThinking = !isUser && isStreaming && message.isSearching;
-  // 스트리밍 중이면서 텍스트가 아직 도착하지 않았을 때의 도트 (검색 후 답변 직전)
   const showDots = !isUser && isStreaming && !message.isSearching && !message.content;
 
   const handleCopy = () => {
@@ -178,11 +144,7 @@ function MessageCard({ message, isStreaming }) {
           <span className="source-header">참고 문서 {message.sources.length}</span>
           <div className="source-grid">
             {message.sources.map((src, i) => (
-              <div 
-                key={`${message.id}-src-${i}`} 
-                className="source-card"
-                title={src.preview}
-              >
+              <div key={`${message.id}-src-${i}`} className="source-card" title={src.preview}>
                 <div className="source-top">
                   <strong>{src.source}</strong>
                   <span className="source-score">{formatScore(src.score)}</span>
@@ -207,48 +169,45 @@ function MessageCard({ message, isStreaming }) {
 /* ── App ──────────────────────────────────────────────────── */
 
 function App() {
-  const [messages, setMessages] = useState([
-    {
-      id: "welcome",
-      role: "assistant",
-      content: WELCOME_MESSAGE,
-      sources: [],
-      score: null,
-      context: "",
-      isSearching: false,
-    },
-  ]);
-  const [input, setInput] = useState("");
-  const [chatLoading, setChatLoading] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [files, setFiles] = useState([]);
-  const [stats, setStats] = useState(INITIAL_STATS);
-  const [availableModels, setAvailableModels] = useState([]);
-  const [selectedModel, setSelectedModel] = useState("");
-  const [sessions, setSessions] = useState([]);
-  const [currentSessionId, setCurrentSessionId] = useState(null);
-  const [statusMessage, setStatusMessage] = useState(TEXT.ready);
-  const [dragActive, setDragActive] = useState(false);
-  const [fileFilter, setFileFilter] = useState("");
-  const [toasts, setToasts] = useState([]);
-  const [confirmData, setConfirmData] = useState({ isOpen: false, title: "", message: "", onConfirm: null });
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const { token, user, logout, authFetch } = useAuth();
 
-  // Background streaming state: sessionId -> { content, sources, score, context, isSearching }
+  // 로그인 안 된 경우 LoginPage 표시
+  if (!token) return <LoginPage />;
+
+  return <AuthenticatedApp authFetch={authFetch} user={user} logout={logout} />;
+}
+
+function AuthenticatedApp({ authFetch, user, logout }) {
+  const [messages, setMessages] = useState([
+    { id: "welcome", role: "assistant", content: WELCOME_MESSAGE, sources: [], score: null, context: "", isSearching: false },
+  ]);
+  const [input, setInput]               = useState("");
+  const [chatLoading, setChatLoading]   = useState(false);
+  const [uploading, setUploading]       = useState(false);
+  const [files, setFiles]               = useState([]);
+  const [stats, setStats]               = useState(INITIAL_STATS);
+  const [availableModels, setAvailableModels] = useState([]);
+  const [selectedModel, setSelectedModel]     = useState("");
+  const [sessions, setSessions]         = useState([]);
+  const [currentSessionId, setCurrentSessionId] = useState(null);
+  const [statusMessage, setStatusMessage]       = useState(TEXT.ready);
+  const [dragActive, setDragActive]     = useState(false);
+  const [fileFilter, setFileFilter]     = useState("");
+  const [toasts, setToasts]             = useState([]);
+  const [confirmData, setConfirmData]   = useState({ isOpen: false, title: "", message: "", onConfirm: null });
+  const [sidebarOpen, setSidebarOpen]   = useState(true);
   const [streamingMessages, setStreamingMessages] = useState({});
 
-  const chatEndRef = useRef(null);
-  const fileInputRef = useRef(null);
+  const chatEndRef      = useRef(null);
+  const fileInputRef    = useRef(null);
   const quickPromptsRef = useRef(null);
-  const textareaRef = useRef(null);
+  const textareaRef     = useRef(null);
   const activeStreamsRef = useRef(new Map());
-  const messageIdRef = useRef(0);
-  const toastIdRef = useRef(0);
+  const messageIdRef    = useRef(0);
+  const toastIdRef      = useRef(0);
 
-  /* Toast helpers */
-  const dismissToast = (id) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
-  };
+  /* ── Toast ── */
+  const dismissToast = (id) => setToasts((prev) => prev.filter((t) => t.id !== id));
 
   const addToast = (message, type = "info", onClick = null) => {
     const id = ++toastIdRef.current;
@@ -260,70 +219,42 @@ function App() {
 
   const updateMessage = (id, updater) =>
     setMessages((prev) =>
-      prev.map((m) =>
-        m.id !== id ? m : typeof updater === "function" ? updater(m) : { ...m, ...updater },
-      ),
+      prev.map((m) => m.id !== id ? m : typeof updater === "function" ? updater(m) : { ...m, ...updater })
     );
 
-  // Drag-to-scroll for Quick Prompts
-  const handleDragScroll = () => {
+  /* ── Drag-to-scroll for Quick Prompts ── */
+  useEffect(() => {
     const slider = quickPromptsRef.current;
     if (!slider) return;
 
-    let isDown = false;
-    let startX;
-    let scrollLeft;
-    let hasMoved = false;
+    let isDown = false, startX, scrollLeft, hasMoved = false;
 
     const start = (e) => {
-      isDown = true;
-      hasMoved = false;
+      isDown = true; hasMoved = false;
       slider.classList.add("active");
-      const pageX = e.pageX || (e.touches && e.touches[0].pageX);
-      startX = pageX - slider.offsetLeft;
+      startX = (e.pageX || e.touches?.[0]?.pageX) - slider.offsetLeft;
       scrollLeft = slider.scrollLeft;
     };
-
-    const end = () => {
-      isDown = false;
-      slider.classList.remove("active");
-    };
-
+    const end = () => { isDown = false; slider.classList.remove("active"); };
     const move = (e) => {
       if (!isDown) return;
-      
-      const pageX = e.pageX || (e.touches && e.touches[0].pageX);
-      const x = pageX - slider.offsetLeft;
-      const walk = (x - startX) * 1.5; // 속도 계수를 2에서 1.5로 하향 조정
-      
-      if (Math.abs(walk) > 3) {
-        hasMoved = true;
-      }
-      
-      if (hasMoved) {
-        e.preventDefault();
-        slider.scrollLeft = scrollLeft - walk;
-      }
+      const x = (e.pageX || e.touches?.[0]?.pageX) - slider.offsetLeft;
+      const walk = (x - startX) * 1.5;
+      if (Math.abs(walk) > 3) hasMoved = true;
+      if (hasMoved) { e.preventDefault(); slider.scrollLeft = scrollLeft - walk; }
     };
-
-    const preventClick = (e) => {
-      if (hasMoved) {
-        e.stopImmediatePropagation();
-        e.preventDefault();
-        hasMoved = false;
-      }
-    };
+    const preventClick = (e) => { if (hasMoved) { e.stopImmediatePropagation(); e.preventDefault(); hasMoved = false; } };
 
     slider.addEventListener("mousedown", start);
     slider.addEventListener("mousemove", move);
     slider.addEventListener("mouseup", end);
     slider.addEventListener("mouseleave", end);
-    
     slider.addEventListener("touchstart", start, { passive: true });
     slider.addEventListener("touchmove", move, { passive: false });
     slider.addEventListener("touchend", end);
-
     slider.addEventListener("click", preventClick, true);
+
+    textareaRef.current?.focus();
 
     return () => {
       slider.removeEventListener("mousedown", start);
@@ -335,27 +266,33 @@ function App() {
       slider.removeEventListener("touchend", end);
       slider.removeEventListener("click", preventClick, true);
     };
-  };
-
-  useEffect(() => {
-    const cleanup = handleDragScroll();
-    // 초기 로드 시 포커스
-    textareaRef.current?.focus();
-    return cleanup;
   }, []);
 
+  /* ── Auto-scroll ── */
   useEffect(() => {
     const chatFeed = chatEndRef.current?.parentElement;
     if (!chatFeed) return;
-
-    // 사용자가 바닥 근처(300px 이내)에 있을 때만 자동 스크롤
     const isAtBottom = chatFeed.scrollHeight - chatFeed.scrollTop - chatFeed.clientHeight < 300;
-    
-    if (isAtBottom) {
-      chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    }
+    if (isAtBottom) chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  /* ── 인증 포함 JSON 응답 유틸 ── */
+  const readJson = async (response) => {
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || data.message || TEXT.requestFailed);
+    return data;
+  };
+
+  const fetchSidebarData = async () => {
+    const [filesRes, statsRes] = await Promise.all([
+      authFetch(`${API_BASE}/files-db`),
+      authFetch(`${API_BASE}/stats`),
+    ]);
+    const [filesData, statsData] = await Promise.all([readJson(filesRes), readJson(statsRes)]);
+    return { files: filesData.files || [], stats: statsData };
+  };
+
+  /* ── 초기 데이터 로드 ── */
   useEffect(() => {
     (async () => {
       try {
@@ -364,13 +301,11 @@ function App() {
         setStats(data.stats);
         if (!selectedModel) setSelectedModel(data.stats.chat_model);
 
-        // Fetch available models
-        const modelsRes = await fetch(`${API_BASE}/models`);
+        const modelsRes = await authFetch(`${API_BASE}/models`);
         const modelsData = await readJson(modelsRes);
         setAvailableModels(modelsData.models || []);
 
-        // Fetch sessions
-        const sessionsRes = await fetch(`${API_BASE}/sessions`);
+        const sessionsRes = await authFetch(`${API_BASE}/sessions`);
         const sessionsData = await readJson(sessionsRes);
         setSessions(sessionsData.sessions || []);
       } catch (err) {
@@ -385,7 +320,7 @@ function App() {
       setFiles(data.files);
       setStats(data.stats);
 
-      const sessionsRes = await fetch(`${API_BASE}/sessions`);
+      const sessionsRes = await authFetch(`${API_BASE}/sessions`);
       const sessionsData = await readJson(sessionsRes);
       setSessions(sessionsData.sessions || []);
     } catch (err) {
@@ -395,75 +330,39 @@ function App() {
 
   const loadSession = async (sessionId) => {
     if (sessionId === currentSessionId) return;
-    
-    // 세션 전환 시 해당 세션이 백그라운드에서 진행 중인지 확인
+
     const isRunning = activeStreamsRef.current.has(sessionId);
     setChatLoading(isRunning);
-    if (isRunning) {
-      setStatusMessage(TEXT.thinking);
-    } else {
-      setStatusMessage(TEXT.ready);
-    }
+    setStatusMessage(isRunning ? TEXT.thinking : TEXT.ready);
 
     try {
-      const res = await fetch(`${API_BASE}/sessions/${sessionId}`);
+      const res = await authFetch(`${API_BASE}/sessions/${sessionId}`);
       const data = await readJson(res);
-      
+
       let formattedMessages = data.messages.map(m => ({
-        id: m.id,
-        role: m.role,
-        content: m.content,
-        sources: m.sources || [],
-        score: m.score,
-        context: m.context || "",
-        isSearching: false
+        id: m.id, role: m.role, content: m.content,
+        sources: m.sources || [], score: m.score, context: m.context || "", isSearching: false,
       }));
 
-      // 현재 백그라운드에서 진행 중인 내용이 있다면 히스토리에 병합
       const bgMsg = streamingMessages[sessionId];
       if (bgMsg) {
         const lastMsg = formattedMessages[formattedMessages.length - 1];
         if (lastMsg && lastMsg.role === "assistant" && !lastMsg.content) {
-          // DB에 빈 어시스턴트 메시지만 생성된 경우 (메타만 전송된 시점 등)
-          formattedMessages[formattedMessages.length - 1] = {
-            ...lastMsg,
-            content: bgMsg.content,
-            sources: bgMsg.sources,
-            score: bgMsg.score,
-            context: bgMsg.context,
-            isSearching: bgMsg.isSearching
-          };
+          formattedMessages[formattedMessages.length - 1] = { ...lastMsg, ...bgMsg };
         } else if (!lastMsg || lastMsg.role === "user") {
-          // 어시스턴트 답변이 아직 DB에 저장되지 않은 경우 새로 추가
           formattedMessages.push({
-            id: `bg-${sessionId}-${Date.now()}`,
-            role: "assistant",
-            content: bgMsg.content,
-            sources: bgMsg.sources,
-            score: bgMsg.score,
-            context: bgMsg.context,
-            isSearching: bgMsg.isSearching
+            id: `bg-${sessionId}-${Date.now()}`, role: "assistant",
+            content: bgMsg.content, sources: bgMsg.sources,
+            score: bgMsg.score, context: bgMsg.context, isSearching: bgMsg.isSearching,
           });
         }
       }
-      
+
       setMessages(formattedMessages.length > 0 ? formattedMessages : [
-        {
-          id: "welcome",
-          role: "assistant",
-          content: WELCOME_MESSAGE,
-          sources: [],
-          score: null,
-          context: "",
-          isSearching: false,
-        }
+        { id: "welcome", role: "assistant", content: WELCOME_MESSAGE, sources: [], score: null, context: "", isSearching: false },
       ]);
       setCurrentSessionId(sessionId);
-      
-      // 세션 로드 후 즉시 하단으로 스크롤
-      setTimeout(() => {
-        chatEndRef.current?.scrollIntoView({ behavior: "auto" });
-      }, 50);
+      setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "auto" }), 50);
     } catch (err) {
       addToast(err.message, "error");
     }
@@ -471,72 +370,40 @@ function App() {
 
   const deleteChatSession = async (e, sessionId) => {
     e.stopPropagation();
-    
     setConfirmData({
-      isOpen: true,
-      title: "대화 삭제",
-      message: "이 대화 기록을 영구적으로 삭제하시겠습니까?",
+      isOpen: true, title: "대화 삭제", message: "이 대화 기록을 영구적으로 삭제하시겠습니까?",
       onConfirm: async () => {
         setConfirmData(prev => ({ ...prev, isOpen: false }));
         try {
-          await fetch(`${API_BASE}/sessions/${sessionId}`, { method: "DELETE" });
-          if (currentSessionId === sessionId) {
-            resetChat();
-          }
+          await authFetch(`${API_BASE}/sessions/${sessionId}`, { method: "DELETE" });
+          if (currentSessionId === sessionId) resetChat();
           addToast("대화 기록이 삭제되었습니다.", "success");
           await refreshSidebar();
         } catch (err) {
           addToast(err.message, "error");
         }
-      }
+      },
     });
   };
 
   const processStreamLine = (line, assistantId, sessionId) => {
     if (!line.trim()) return;
     const event = JSON.parse(line);
-    
-    if (event.type === "chunk") {
-      const updater = (prev) => ({ 
-        ...prev, 
-        content: (prev.content || "") + event.content,
-        isSearching: false 
-      });
-      
-      setStreamingMessages(prev => ({
-        ...prev,
-        [sessionId]: updater(prev[sessionId] || {})
-      }));
 
-      if (currentSessionId === sessionId) {
-        updateMessage(assistantId, updater);
-      }
+    if (event.type === "chunk") {
+      const updater = (prev) => ({ ...prev, content: (prev.content || "") + event.content, isSearching: false });
+      setStreamingMessages(prev => ({ ...prev, [sessionId]: updater(prev[sessionId] || {}) }));
+      if (currentSessionId === sessionId) updateMessage(assistantId, updater);
+
     } else if (event.type === "status") {
       const isSearching = event.state === "searching";
-      setStreamingMessages(prev => ({
-        ...prev,
-        [sessionId]: { ...(prev[sessionId] || {}), isSearching }
-      }));
-      
-      if (currentSessionId === sessionId) {
-        updateMessage(assistantId, { isSearching });
-      }
-    } else if (event.type === "meta") {
-      const meta = {
-        sources: event.sources || [],
-        score: event.score ?? null,
-        context: event.context || "",
-        isSearching: false 
-      };
-      
-      setStreamingMessages(prev => ({
-        ...prev,
-        [sessionId]: { ...(prev[sessionId] || {}), ...meta }
-      }));
+      setStreamingMessages(prev => ({ ...prev, [sessionId]: { ...(prev[sessionId] || {}), isSearching } }));
+      if (currentSessionId === sessionId) updateMessage(assistantId, { isSearching });
 
-      if (currentSessionId === sessionId) {
-        updateMessage(assistantId, meta);
-      }
+    } else if (event.type === "meta") {
+      const meta = { sources: event.sources || [], score: event.score ?? null, context: event.context || "", isSearching: false };
+      setStreamingMessages(prev => ({ ...prev, [sessionId]: { ...(prev[sessionId] || {}), ...meta } }));
+      if (currentSessionId === sessionId) updateMessage(assistantId, meta);
     }
   };
 
@@ -544,23 +411,19 @@ function App() {
     const query = (preset ?? input).trim();
     if (!query || (currentSessionId && activeStreamsRef.current.has(currentSessionId))) return;
 
-    const controller = new AbortController();
-    const userId = nextId();
+    const controller  = new AbortController();
+    const userId      = nextId();
     const assistantId = nextId();
     const tempSessionId = currentSessionId || `temp-${Date.now()}`;
 
     activeStreamsRef.current.set(tempSessionId, controller);
-    
+
     setMessages((prev) => [
       ...prev,
       { id: userId, role: "user", content: query, sources: [], score: null, context: "", isSearching: false },
       { id: assistantId, role: "assistant", content: "", sources: [], score: null, context: "", isSearching: false },
     ]);
-    
-    setStreamingMessages(prev => ({
-      ...prev,
-      [tempSessionId]: { content: "", sources: [], score: null, context: "", isSearching: false }
-    }));
+    setStreamingMessages(prev => ({ ...prev, [tempSessionId]: { content: "", sources: [], score: null, context: "", isSearching: false } }));
 
     setInput("");
     setChatLoading(true);
@@ -568,24 +431,16 @@ function App() {
 
     const history = messages
       .filter(m => m.id !== "welcome" && m.content.trim() !== "")
-      .map(m => ({
-        role: m.role,
-        content: m.content
-      }));
+      .map(m => ({ role: m.role, content: m.content }));
 
     let actualSessionId = currentSessionId;
 
     try {
-      const response = await fetch(`${API_BASE}/ask-stream`, {
+      const response = await authFetch(`${API_BASE}/ask-stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          query, 
-          model: selectedModel,
-          history: history,
-          session_id: currentSessionId
-        }),
-        signal: controller.signal
+        body: JSON.stringify({ query, model: selectedModel, history, session_id: currentSessionId }),
+        signal: controller.signal,
       });
 
       if (!response.ok || !response.body) {
@@ -593,7 +448,7 @@ function App() {
         throw new Error(data.detail || data.message || TEXT.answerFailed);
       }
 
-      const reader = response.body.getReader();
+      const reader  = response.body.getReader();
       const decoder = new TextDecoder("utf-8");
       let buffer = "";
 
@@ -603,41 +458,36 @@ function App() {
 
         const lines = buffer.split("\n");
         buffer = lines.pop() || "";
+
         for (const line of lines) {
           if (!line.trim()) continue;
           const event = JSON.parse(line);
-          
+
           if (event.type === "session") {
             actualSessionId = event.session_id;
-            // 임시 ID에서 실제 세션 ID로 스트림 정보 이전
             activeStreamsRef.current.delete(tempSessionId);
             activeStreamsRef.current.set(actualSessionId, controller);
-            
+
             setStreamingMessages(prev => {
-              const newState = { ...prev, [actualSessionId]: prev[tempSessionId] };
-              delete newState[tempSessionId];
-              return newState;
+              const next = { ...prev, [actualSessionId]: prev[tempSessionId] };
+              delete next[tempSessionId];
+              return next;
             });
-            
-            // 만약 사용자가 여전히 '새 채팅' 상태이거나 임시 방에 있었다면 실제 세션으로 이동
-            setCurrentSessionId(prev => {
-              if (prev === null || prev.startsWith?.("temp-")) return actualSessionId;
-              return prev;
-            });
+            setCurrentSessionId(prev =>
+              prev === null || prev?.startsWith?.("temp-") ? actualSessionId : prev
+            );
             refreshSidebar();
           } else {
             processStreamLine(line, assistantId, actualSessionId || tempSessionId);
           }
         }
-
         if (done) break;
       }
 
-      // 완료 알림 (현재 보고 있는 방이 아닐 때만 토스트)
       setCurrentSessionId(prevCurrent => {
         if (actualSessionId && prevCurrent !== actualSessionId) {
-          const sessionTitle = query.slice(0, 15) + (query.length > 15 ? "..." : "");
-          addToast(`'${sessionTitle}' 답변이 완료되었습니다.`, "success", () => loadSession(actualSessionId));
+          const title = query.slice(0, 15) + (query.length > 15 ? "..." : "");
+          addToast(`'${title}' 답변이 완료되었습니다.`, "success", () => loadSession(actualSessionId));
         } else {
           setStatusMessage(TEXT.answerReady);
           addToast(TEXT.answerReady, "success");
@@ -647,48 +497,31 @@ function App() {
 
     } catch (err) {
       if (err.name === "AbortError") return;
-      
       const errorMsg = err.message || TEXT.answerFailed;
       const targetId = actualSessionId || tempSessionId;
-      
       setCurrentSessionId(prev => {
-        if (prev === targetId) {
-          updateMessage(assistantId, { content: errorMsg });
-        }
+        if (prev === targetId) updateMessage(assistantId, { content: errorMsg });
         return prev;
       });
       addToast(errorMsg, "error");
     } finally {
       const finalId = actualSessionId || tempSessionId;
       activeStreamsRef.current.delete(finalId);
-      
-      setCurrentSessionId(prev => {
-        if (prev === finalId) setChatLoading(false);
-        return prev;
-      });
-      
-      // 스트리밍 정보 삭제 유예
+      setCurrentSessionId(prev => { if (prev === finalId) setChatLoading(false); return prev; });
       setTimeout(() => {
-        setStreamingMessages(prev => {
-          const newState = { ...prev };
-          delete newState[finalId];
-          return newState;
-        });
+        setStreamingMessages(prev => { const next = { ...prev }; delete next[finalId]; return next; });
       }, 2000);
     }
   };
 
   const uploadFile = async (file) => {
     if (!file || uploading) return;
-
     const formData = new FormData();
     formData.append("file", file);
-
     setUploading(true);
     setStatusMessage(`${file.name} 업로드 중...`);
-
     try {
-      const response = await fetch(`${API_BASE}/upload`, { method: "POST", body: formData });
+      const response = await authFetch(`${API_BASE}/upload`, { method: "POST", body: formData });
       const data = await readJson(response);
       await refreshSidebar();
       addToast(`${data.file} 인덱싱 완료 (${data.chunks}개 청크)`, "success");
@@ -702,29 +535,18 @@ function App() {
     }
   };
 
-  const handleUpload = async (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    await uploadFile(file);
-  };
-
-  const handleDrop = async (e) => {
-    e.preventDefault();
-    await uploadFile(e.dataTransfer.files?.[0]);
-  };
+  const handleUpload = async (e) => { const file = e.target.files?.[0]; e.target.value = ""; await uploadFile(file); };
+  const handleDrop   = async (e) => { e.preventDefault(); await uploadFile(e.dataTransfer.files?.[0]); };
 
   const deleteFile = async (name) => {
     setConfirmData({
-      isOpen: true,
-      title: "문서 삭제",
+      isOpen: true, title: "문서 삭제",
       message: `"${name}" 파일을 삭제하시겠습니까? 관련 데이터가 모두 제거됩니다.`,
       onConfirm: async () => {
         setConfirmData(prev => ({ ...prev, isOpen: false }));
         setStatusMessage(`${name} 삭제 중...`);
         try {
-          const response = await fetch(`${API_BASE}/file?name=${encodeURIComponent(name)}`, {
-            method: "DELETE",
-          });
+          const response = await authFetch(`${API_BASE}/file?name=${encodeURIComponent(name)}`, { method: "DELETE" });
           const data = await readJson(response);
           await refreshSidebar();
           addToast(`${data.file} 삭제 완료`, "success");
@@ -733,19 +555,16 @@ function App() {
           addToast(err.message || TEXT.deleteFailed, "error");
           setStatusMessage(err.message || TEXT.deleteFailed);
         }
-      }
+      },
     });
   };
+
   const handleResetChat = () => {
     if (chatLoading) {
       setConfirmData({
-        isOpen: true,
-        title: "대화 중단",
+        isOpen: true, title: "대화 중단",
         message: "현재 답변이 생성 중입니다. 중단하고 새로운 채팅을 시작하시겠습니까?",
-        onConfirm: () => {
-          setConfirmData(prev => ({ ...prev, isOpen: false }));
-          resetChat();
-        }
+        onConfirm: () => { setConfirmData(prev => ({ ...prev, isOpen: false })); resetChat(); },
       });
     } else {
       resetChat();
@@ -753,47 +572,34 @@ function App() {
   };
 
   const resetChat = () => {
-    // Abort all active streams on total reset
-    activeStreamsRef.current.forEach(controller => controller.abort());
+    activeStreamsRef.current.forEach(c => c.abort());
     activeStreamsRef.current.clear();
-
-    setMessages([
-      {
-        id: "welcome",
-        role: "assistant",
-        content: WELCOME_MESSAGE,
-        sources: [],
-        score: null,
-        context: "",
-        isSearching: false,
-      },
-    ]);
+    setMessages([{ id: "welcome", role: "assistant", content: WELCOME_MESSAGE, sources: [], score: null, context: "", isSearching: false }]);
     setCurrentSessionId(null);
     setStreamingMessages({});
     setInput("");
     setStatusMessage(TEXT.ready);
     setChatLoading(false);
-    
-    setTimeout(() => {
-      textareaRef.current?.focus();
-    }, 0);
+    setTimeout(() => textareaRef.current?.focus(), 0);
   };
 
-  const filteredFiles = files.filter((f) =>
-    f.toLowerCase().includes(fileFilter.trim().toLowerCase()),
-  );
+  const handleLogout = () => {
+    activeStreamsRef.current.forEach(c => c.abort());
+    activeStreamsRef.current.clear();
+    logout();
+  };
 
-  const libraryDensity =
-    stats.indexed_files > 0
-      ? `${Math.max(1, Math.round(stats.total_chunks / stats.indexed_files))}청크/문서`
-      : "비어 있음";
+  const filteredFiles   = files.filter(f => f.toLowerCase().includes(fileFilter.trim().toLowerCase()));
+  const libraryDensity  = stats.indexed_files > 0
+    ? `${Math.max(1, Math.round(stats.total_chunks / stats.indexed_files))}청크/문서`
+    : "비어 있음";
 
   /* ── Render ─────────────────────────────────────────────── */
   return (
     <div className="app-shell">
       <ToastRegion toasts={toasts} onDismiss={dismissToast} />
 
-      <ConfirmModal 
+      <ConfirmModal
         isOpen={confirmData.isOpen}
         title={confirmData.title}
         message={confirmData.message}
@@ -803,11 +609,7 @@ function App() {
 
       {/* Top Bar */}
       <header className="top-bar">
-        <button 
-          className="btn-sidebar-toggle" 
-          onClick={() => setSidebarOpen(!sidebarOpen)}
-          title={sidebarOpen ? "사이드바 접기" : "사이드바 펴기"}
-        >
+        <button className="btn-sidebar-toggle" onClick={() => setSidebarOpen(!sidebarOpen)} title={sidebarOpen ? "사이드바 접기" : "사이드바 펴기"}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <line x1="3" y1="12" x2="21" y2="12"></line>
             <line x1="3" y1="6" x2="21" y2="6"></line>
@@ -846,6 +648,25 @@ function App() {
           <span className="live-dot" />
           <span>{chatLoading ? "생성 중" : "대기 중"}</span>
         </div>
+
+        {/* 사용자 정보 + 로그아웃 */}
+        <div className="top-user">
+          <span className="top-username" title="로그인된 사용자">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 4, verticalAlign: "middle" }}>
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+              <circle cx="12" cy="7" r="4"></circle>
+            </svg>
+            {user?.username}
+          </span>
+          <button className="btn-logout" onClick={handleLogout} title="로그아웃">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+              <polyline points="16 17 21 12 16 7"></polyline>
+              <line x1="21" y1="12" x2="9" y2="12"></line>
+            </svg>
+            로그아웃
+          </button>
+        </div>
       </header>
 
       {/* Workspace */}
@@ -854,8 +675,7 @@ function App() {
         <nav className="history-sidebar" aria-label="대화 기록">
           <div className="history-head">
             <button type="button" className="btn-new-chat" onClick={handleResetChat}>
-              <span className="plus-icon">+</span>
-              새 채팅 시작
+              <span className="plus-icon">+</span>새 채팅 시작
             </button>
           </div>
           <div className="history-list">
@@ -865,25 +685,17 @@ function App() {
               </div>
             ) : (
               sessions.map((session) => (
-                <div 
-                  key={session.id} 
+                <div
+                  key={session.id}
                   className={`history-item ${currentSessionId === session.id ? "active" : ""}`}
                   onClick={() => loadSession(session.id)}
                 >
                   <span className="history-icon">💬</span>
                   <div className="history-content">
                     <span className="history-title">{session.title}</span>
-                    <span className="history-date">
-                      {new Date(session.updated_at).toLocaleDateString()}
-                    </span>
+                    <span className="history-date">{new Date(session.updated_at).toLocaleDateString()}</span>
                   </div>
-                  <button 
-                    className="btn-history-del" 
-                    onClick={(e) => deleteChatSession(e, session.id)}
-                    title="대화 삭제"
-                  >
-                    ✕
-                  </button>
+                  <button className="btn-history-del" onClick={(e) => deleteChatSession(e, session.id)} title="대화 삭제">✕</button>
                 </div>
               ))
             )}
@@ -897,9 +709,7 @@ function App() {
               <h2>문서 채팅</h2>
               <p>스트리밍 응답 · 근거 문서 표시 · 문맥 검색</p>
             </div>
-            <button type="button" className="btn-ghost" onClick={handleResetChat}>
-              채팅 초기화
-            </button>
+            <button type="button" className="btn-ghost" onClick={handleResetChat}>채팅 초기화</button>
           </div>
 
           <div className="chat-feed" role="log" aria-live="polite" aria-label="채팅 메시지">
@@ -913,40 +723,22 @@ function App() {
             <div ref={chatEndRef} />
           </div>
 
-          {/* Quick Prompts */}
-          <div 
-            ref={quickPromptsRef}
-            className="quick-prompts" 
-            role="group" 
-            aria-label="빠른 질문"
-          >
+          <div ref={quickPromptsRef} className="quick-prompts" role="group" aria-label="빠른 질문">
             {QUICK_PROMPTS.map((prompt, i) => (
-              <button
-                key={prompt}
-                type="button"
-                className="quick-chip"
-                onClick={() => sendMessage(prompt)}
-                disabled={chatLoading}
-              >
+              <button key={prompt} type="button" className="quick-chip" onClick={() => sendMessage(prompt)} disabled={chatLoading}>
                 <span className="quick-num">0{i + 1}</span>
                 <span>{prompt}</span>
               </button>
             ))}
           </div>
 
-          {/* Composer */}
           <div className="composer">
             <div className="composer-box">
               <textarea
                 ref={textareaRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    sendMessage();
-                  }
-                }}
+                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
                 placeholder="정책, 가이드, 사내 문서에 대해 질문해보세요..."
                 disabled={chatLoading}
                 rows={3}
@@ -956,12 +748,7 @@ function App() {
                 <span className="composer-status">{statusMessage}</span>
                 <div className="composer-actions">
                   <span className="key-hint">Shift+Enter 줄바꿈</span>
-                  <button
-                    type="button"
-                    className="btn-send"
-                    onClick={() => sendMessage()}
-                    disabled={chatLoading || !input.trim()}
-                  >
+                  <button type="button" className="btn-send" onClick={() => sendMessage()} disabled={chatLoading || !input.trim()}>
                     {chatLoading ? "생성 중..." : "보내기"}
                   </button>
                 </div>
@@ -972,7 +759,6 @@ function App() {
 
         {/* Side Panel */}
         <aside className="side-panel" aria-label="문서 관리">
-          {/* Upload */}
           <div className="side-section">
             <div className="side-head">
               <h3>문서 업로드</h3>
@@ -982,65 +768,35 @@ function App() {
               type="button"
               className={`upload-zone ${dragActive ? "drag-over" : ""} ${uploading ? "uploading" : ""}`}
               onClick={() => fileInputRef.current?.click()}
-              onDragEnter={(e) => {
-                e.preventDefault();
-                setDragActive(true);
-              }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragActive(true);
-              }}
-              onDragLeave={(e) => {
-                e.preventDefault();
-                if (!e.currentTarget.contains(e.relatedTarget)) setDragActive(false);
-              }}
+              onDragEnter={(e) => { e.preventDefault(); setDragActive(true); }}
+              onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
+              onDragLeave={(e) => { e.preventDefault(); if (!e.currentTarget.contains(e.relatedTarget)) setDragActive(false); }}
               onDrop={handleDrop}
               disabled={uploading}
-              aria-label="파일 업로드 영역. 클릭하거나 파일을 끌어다 놓으세요."
+              aria-label="파일 업로드 영역"
             >
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".pdf,.txt"
-                onChange={handleUpload}
-                disabled={uploading}
-                hidden
-              />
-              <div className="upload-icon" aria-hidden="true">
-                {uploading ? "⟳" : "↑"}
-              </div>
+              <input ref={fileInputRef} type="file" accept=".pdf,.txt" onChange={handleUpload} disabled={uploading} hidden />
+              <div className="upload-icon" aria-hidden="true">{uploading ? "⟳" : "↑"}</div>
               <strong>{uploading ? "인덱싱 중..." : "파일 업로드"}</strong>
               <p>{dragActive ? TEXT.dragActive : TEXT.dragIdle}</p>
               <span className="upload-formats">PDF · TXT</span>
             </button>
           </div>
 
-          {/* File Manager */}
           <div className="side-section">
             <div className="side-head">
               <h3>지식 베이스</h3>
               <span className="badge badge-neutral">{libraryDensity}</span>
             </div>
             <div className="file-search">
-              <input
-                type="text"
-                value={fileFilter}
-                onChange={(e) => setFileFilter(e.target.value)}
-                placeholder="파일명으로 찾기..."
-                aria-label="문서 검색"
-              />
+              <input type="text" value={fileFilter} onChange={(e) => setFileFilter(e.target.value)} placeholder="파일명으로 찾기..." aria-label="문서 검색" />
             </div>
             <div className="file-list" role="list" aria-label="인덱싱된 문서 목록">
               {filteredFiles.length === 0 ? (
                 <div className="empty-state">
-                  <span className="empty-icon" aria-hidden="true">
-                    {files.length === 0 ? "◎" : "⊘"}
-                  </span>
+                  <span className="empty-icon" aria-hidden="true">{files.length === 0 ? "◎" : "⊘"}</span>
                   {files.length === 0 ? (
-                    <>
-                      <p>아직 인덱싱된 문서가 없습니다.</p>
-                      <p>위에서 파일을 업로드해보세요.</p>
-                    </>
+                    <><p>아직 인덱싱된 문서가 없습니다.</p><p>위에서 파일을 업로드해보세요.</p></>
                   ) : (
                     <p>검색 조건에 맞는 문서가 없습니다.</p>
                   )}
@@ -1048,42 +804,21 @@ function App() {
               ) : (
                 filteredFiles.map((file) => (
                   <div key={file} className="file-item" role="listitem">
-                    <div className="file-ext" aria-hidden="true">
-                      {getExtension(file)}
-                    </div>
-                    <span className="file-name" title={file}>
-                      {file}
-                    </span>
-                    <button
-                      type="button"
-                      className="btn-del"
-                      onClick={() => deleteFile(file)}
-                      aria-label={`${file} 삭제`}
-                      title="삭제"
-                    >
-                      ✕
-                    </button>
+                    <div className="file-ext" aria-hidden="true">{getExtension(file)}</div>
+                    <span className="file-name" title={file}>{file}</span>
+                    <button type="button" className="btn-del" onClick={() => deleteFile(file)} aria-label={`${file} 삭제`} title="삭제">✕</button>
                   </div>
                 ))
               )}
             </div>
           </div>
 
-          {/* Model Info */}
           <div className="model-info" aria-label="모델 정보">
             <p className="model-info-label">AI 모델 설정</p>
             <div className="model-row">
               <span className="model-row-label">Chat</span>
-              <select 
-                className="model-select"
-                value={selectedModel} 
-                onChange={(e) => setSelectedModel(e.target.value)}
-                disabled={chatLoading}
-              >
-                {availableModels.map(m => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
-                {/* Fallback if current model not in available list */}
+              <select className="model-select" value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} disabled={chatLoading}>
+                {availableModels.map(m => <option key={m} value={m}>{m}</option>)}
                 {stats.chat_model && !availableModels.includes(stats.chat_model) && (
                   <option value={stats.chat_model}>{stats.chat_model}</option>
                 )}

@@ -1396,3 +1396,212 @@
   .message-card.user,
   .message-card.assistant { max-width: 100%; }
 }
+
+
+/* ─── Top Bar: 사용자 / 로그아웃 ────────────────────────── */
+.top-user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.top-username {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+}
+
+.btn-logout {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 11px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line-strong);
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--tr-base);
+}
+
+.btn-logout:hover {
+  background: var(--danger-bg);
+  border-color: var(--danger);
+  color: var(--danger);
+  transform: translateY(-1px);
+}
+
+
+/* ─── Login Page ─────────────────────────────────────────── */
+.login-shell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100dvh;
+  background: var(--bg);
+  padding: 20px;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 380px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-lg);
+  padding: 36px 32px 28px;
+  animation: slideUp 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.login-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.brand-mark.large {
+  width: 42px;
+  height: 42px;
+}
+
+.login-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--heading);
+  letter-spacing: -0.02em;
+}
+
+.login-subtitle {
+  text-align: center;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-bottom: 24px;
+}
+
+.login-tabs {
+  display: flex;
+  border-radius: var(--r-md);
+  background: var(--surface-inset);
+  padding: 4px;
+  gap: 4px;
+  margin-bottom: 20px;
+}
+
+.login-tab {
+  flex: 1;
+  padding: 8px;
+  border-radius: var(--r-sm);
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--tr-base);
+  border: none;
+  background: transparent;
+}
+
+.login-tab.active {
+  background: var(--surface-raised);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--line-strong);
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.login-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.03em;
+  margin-bottom: -4px;
+}
+
+.login-input {
+  width: 100%;
+  padding: 11px 13px;
+  border-radius: var(--r-md);
+  border: 1.5px solid var(--line-strong);
+  background: var(--surface-raised);
+  color: var(--text);
+  font-size: 0.9rem;
+  transition: border-color var(--tr-fast), box-shadow var(--tr-fast);
+}
+
+.login-input:focus {
+  outline: none;
+  border-color: var(--accent-focus);
+  box-shadow: 0 0 0 3px var(--accent-focus-bg);
+}
+
+.login-input::placeholder { color: var(--text-dim); }
+
+.login-error {
+  font-size: 0.8rem;
+  color: var(--danger);
+  background: var(--danger-bg);
+  border-radius: var(--r-sm);
+  padding: 9px 12px;
+  border-left: 3px solid var(--danger);
+}
+
+.btn-login {
+  margin-top: 4px;
+  width: 100%;
+  padding: 12px;
+  border-radius: var(--r-md);
+  background: var(--accent);
+  color: #fff8f2;
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  border: none;
+  transition: all var(--tr-base);
+  letter-spacing: 0.01em;
+}
+
+.btn-login:hover:not(:disabled) {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px var(--accent-glow);
+}
+
+.btn-login:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.login-switch {
+  text-align: center;
+  margin-top: 18px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.login-link {
+  color: var(--accent);
+  font-weight: 600;
+  cursor: pointer;
+  background: none;
+  border: none;
+  font-size: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: opacity var(--tr-fast);
+}
+
+.login-link:hover { opacity: 0.75; }
