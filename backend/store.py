@@ -106,9 +106,14 @@ def build_chunk_id(source: str, chunk_index: int, chunk: str) -> str:
     return f"{source}::{chunk_index}::{digest}"
 
 
-def delete_source(source: str) -> int:
+def delete_source(source: str, user_id: str = "") -> int:
     collection = get_collection()
-    results = collection.get(where={"source": source}, include=[])
+    if user_id:
+        where_filter = {"$and": [{"source": source}, {"user_id": user_id}]}
+    else:
+        where_filter = {"source": source}
+        
+    results = collection.get(where=where_filter, include=[])
     ids = results.get("ids") or []
 
     if ids:
@@ -117,8 +122,12 @@ def delete_source(source: str) -> int:
     return len(ids)
 
 
-def list_indexed_sources() -> list[str]:
-    metadatas = get_collection().get(include=["metadatas"]).get("metadatas") or []
+def list_indexed_sources(user_id: str = "") -> list[str]:
+    where_filter = {}
+    if user_id:
+        where_filter = {"user_id": user_id}
+        
+    metadatas = get_collection().get(where=where_filter, include=["metadatas"]).get("metadatas") or []
     sources = {
         metadata.get("source")
         for metadata in metadatas
@@ -127,21 +136,27 @@ def list_indexed_sources() -> list[str]:
     return sorted(sources)
 
 
-def index_document(source: str, text: str) -> int:
+def index_document(source: str, text: str, user_id: str = "") -> int:
     chunks = chunk_text(text)
     collection = get_collection()
 
     if not chunks:
-        delete_source(source)
+        delete_source(source, user_id=user_id)
         return 0
 
     embeddings = get_embed_model().encode(chunks).tolist()
-    ids = [build_chunk_id(source, index, chunk) for index, chunk in enumerate(chunks)]
+    ids = [build_chunk_id(f"{user_id}:{source}" if user_id else source, index, chunk) for index, chunk in enumerate(chunks)]
     metadatas = [
-        {"source": source, "chunk_index": index}
+        {"source": source, "chunk_index": index, "user_id": user_id}
         for index, _ in enumerate(chunks)
     ]
-    existing_ids = set(collection.get(where={"source": source}, include=[]).get("ids") or [])
+    
+    if user_id:
+        where_filter = {"$and": [{"source": source}, {"user_id": user_id}]}
+    else:
+        where_filter = {"source": source}
+        
+    existing_ids = set(collection.get(where=where_filter, include=[]).get("ids") or [])
 
     # Upsert first so a failed refresh does not wipe the previous index.
     collection.upsert(

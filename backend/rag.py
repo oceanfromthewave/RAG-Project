@@ -7,7 +7,7 @@ import ollama
 
 from backend.store import CHAT_MODEL_NAME, get_collection, get_embed_model, get_reranker
 
-RELEVANCE_THRESHOLD = 0.35
+RELEVANCE_THRESHOLD = 0.6
 NO_CONTEXT_ANSWER = "인덱싱된 문서에서 관련 내용을 찾지 못했습니다. 질문이 문서와 관련이 없거나 더 구체적인 정보가 필요할 수 있습니다."
 SYSTEM_MESSAGE = (
     "You are a helpful internal document assistant. "
@@ -32,73 +32,100 @@ def clear_caches():
     retrieval_cache.clear()
 
 
-def cache_key(query: str) -> str:
-    return f"{RESPONSE_PROFILE_VERSION}:{query.strip()}"
+def cache_key(query: str, user_id: str = "") -> str:
+    return f"{RESPONSE_PROFILE_VERSION}:{user_id}:{query.strip()}"
 
 
 def is_detailed_query(query: str) -> bool:
     normalized = query.lower().strip()
     keywords = [
-        "할 일",
-        "체크리스트",
-        "단계",
-        "절차",
-        "해야 할",
-        "액션 아이템",
-        "업무",
-        "정리해줘",
-        "리스트",
-        "todo",
-        "to-do",
-        "checklist",
-        "action item",
-        "steps",
-        "tasks",
+        "할 일", "체크리스트", "단계", "절차", "해야 할", "액션 아이템", "업무",
+        "정리해줘", "리스트", "todo", "to-do", "checklist", "action item",
+        "steps", "tasks",
     ]
     return any(keyword in normalized for keyword in keywords)
 
+def should_retrieve(query: str) -> bool:
+    text = query.strip().lower()
+
+    # 너무 짧으면 검색 안함
+    if len(text) < 5:
+        return False
+
+    # 질문 키워드
+    question_keywords = [
+        "뭐", "무엇", "왜", "어떻게", "설명", "알려", "차이",
+        "방법", "이유", "가능", "언제", "어디",
+        "what", "why", "how", "explain", "difference"
+    ]
+
+    if any(k in text for k in question_keywords):
+        return True
+
+    # 단어 2개 이상이면 최소한 검색 허용
+    if len(text.split()) >= 2:
+        return True
+
+    return False
+
 
 def is_greeting(query: str) -> bool:
-    # 일상적인 인사말 패턴 감지
     normalized = query.lower().strip()
     greetings = [
         "안녕", "ㅎㅇ", "하이", "반가워", "hello", "hi", "hey",
         "누구야", "뭐해", "반가워요", "좋은 아침", "좋은 점심", "좋은 저녁", "반갑다",
         "고마워", "감사", "수고", "바이", "잘가", "잘 자"
     ]
-    # 질문이 매우 짧고 인사말을 포함하는지 확인
     return len(normalized) <= 15 and any(g in normalized for g in greetings)
 
 
 def is_meaningless(query: str) -> bool:
-    # 1. 너무 짧은 경우 (공백 제외 1글자 등)
     text = query.strip()
     if len(text) <= 1:
         return True
     
-    # 2. 자음/모음만 반복되는 경우 (ㅋㅋㅋ, ㅎㅎㅎ, ㄱㄱㄱ 등)
+    # 1. 한글 자음/모음만 있거나 특수문자만 있는 경우 (이미 존재)
     if re.match(r"^[ㄱ-ㅎㅏ-ㅣ\s!?.~^]+$", text):
         return True
         
-    # 3. 의미 없는 영문/숫자 반복 (asdasd, 123123 등)
-    if re.match(r"^[a-zA-Z0-9\s!?.~^]+$", text):
-        # 모음이 하나도 없는 영문은 무의미한 문자열일 확률이 높음 (인사말 'hi' 등 제외)
-        if len(text) > 3 and not re.search(r"[aeiouAEIOU]", text):
-            return True
-        # 숫자로만 된 경우
-        if text.isdigit() and len(text) > 4:
-            return True
-            
-    # 4. 키보드 연타 패턴 (qwerty, asdfgh 등)
-    if any(seq in text.lower() for seq in ["asdf", "qwer", "zxcv"]):
+    # 2. 자음/모음 비율이 너무 높은 경우 (단어가 아닌 연타)
+    # 한글 완성형 단어 없이 자음/모음이 섞여 있는 경우를 위해 정규식 확장
+    if re.search(r"[ㄱ-ㅎㅏ-ㅣ]{3,}", text):
         return True
 
+    # 3. 같은 글자가 3번 이상 반복되는 경우 (예: aaaaa, ㅋㅋㅋㅋ)
+    if re.search(r"(.)\1\1+", text):
+        return True
+
+    # 4. 영문/숫자 조합에서 모음이 없거나 너무 긴 무의미 문자열
+    if re.match(r"^[a-zA-Z0-9\s!?.~^]+$", text):
+        if len(text) > 3 and not re.search(r"[aeiouAEIOU]", text):
+            return True
+        if text.isdigit() and len(text) > 5:
+            return True
+
+    # 5. 키보드 배열 연타 (한글/영문)
+    mashing_patterns = [
+        "asdf", "qwer", "zxcv", "asdasd", "qwerty",
+        "ㅁㄴㅇㄹ", "ㅂㅈㄷㄱ", "ㅋㅌㅊㅍ", "ㅗㅓㅏㅣ", "ㅐㅔ"
+    ]
+    low_text = text.lower()
+    if any(pattern in low_text for pattern in mashing_patterns):
+        return True
+    
+    # 6. 한글 자음/모음과 영문이 섞여있는데 전체적으로 짧고 의미 없어 보이는 경우
+    # (예: ㅁㄴㅇㄹasdf)
+    if re.search(r"[ㄱ-ㅎㅏ-ㅣ]+", text) and re.search(r"[a-zA-Z]+", text):
+        # 완성된 한글 글자(가-힣)가 하나도 없으면 무의미한 혼용으로 간주
+        if not re.search(r"[가-힣]", text):
+            return True
+
     return False
+
 
 def get_embedding(text: str) -> list[float]:
     if text in embedding_cache:
         return embedding_cache[text]
-
     embedding = get_embed_model().encode(text).tolist()
     embedding_cache[text] = embedding
     return embedding
@@ -109,308 +136,164 @@ def rewrite_query(query: str, model: str | None = None, history: list[dict] | No
         return rewrite_cache[query]
 
     target_model = model or CHAT_MODEL_NAME
-    
-    # 대화 내역이 있는 경우, 내역을 바탕으로 질문을 독립적인 문장으로 재작성
     if history:
-        history_text = "\n".join([f"{m['role']}: {m['content']}" for m in history[-3:]]) # 최근 3개 대화만 참고
-        prompt = f"""
-Given the following conversation history and a follow-up question, rephrase the follow-up question to be a standalone search query.
-If the question is already specific, keep it as is.
-
-History:
-{history_text}
-
-Follow-up Question: {query}
-Standalone Search Query:
-""".strip()
+        history_text = "\n".join([f"{m['role']}: {m['content']}" for m in history[-3:]])
+        prompt = f"Given history and follow-up, rephrase to a standalone query.\nHistory:\n{history_text}\nFollow-up: {query}\nStandalone:"
     else:
-        prompt = f"""
-Rewrite the following question into a short search-friendly query.
-Keep the meaning, remove filler words, and stay specific.
-
-Question:
-{query}
-
-Rewritten:
-""".strip()
+        prompt = f"Rewrite to a search query.\nQuestion: {query}\nRewritten:"
 
     response = ollama.chat(
         model=target_model,
         messages=[{"role": "user", "content": prompt}],
         options={"temperature": 0.1},
     )
-
     rewritten = response["message"]["content"].strip() or query
     rewrite_cache[query] = rewritten
     return rewritten
 
 
-def retrieve_context(query: str, model: str | None = None, history: list[dict] | None = None) -> dict:
-    if query in retrieval_cache:
-        return retrieval_cache[query]
+def retrieve_context(query: str, model: str | None = None, history: list[dict] | None = None, user_id: str = "") -> dict:
+    ckey = f"retrieval:{user_id}:{query}"
+    if ckey in retrieval_cache:
+        return retrieval_cache[ckey]
 
     collection = get_collection()
+    where_filter = {"user_id": user_id} if user_id else None
+
     if collection.count() == 0:
-        result = {"hits": [], "max_score": 0.0}
-        retrieval_cache[query] = result
-        return result
+        return {"hits": [], "max_score": 0.0}
 
     candidates = {}
-
     for current_query in [query, rewrite_query(query, model=model, history=history)]:
         results = collection.query(
             query_embeddings=[get_embedding(current_query)],
             n_results=5,
+            where=where_filter,
             include=["documents", "metadatas"],
         )
-
         documents = (results.get("documents") or [[]])[0]
         metadatas = (results.get("metadatas") or [[]])[0]
 
         for document, metadata in zip(documents, metadatas):
-            if not document:
-                continue
-
+            if not document: continue
             source = (metadata or {}).get("source", "unknown")
             chunk_index = (metadata or {}).get("chunk_index", -1)
-            key = (source, chunk_index, document)
-            candidates[key] = {
-                "document": document,
-                "source": source,
-                "chunk_index": chunk_index,
+            candidates[(source, chunk_index, document)] = {
+                "document": document, "source": source, "chunk_index": chunk_index
             }
 
     if not candidates:
-        result = {"hits": [], "max_score": 0.0}
-        retrieval_cache[query] = result
-        return result
+        return {"hits": [], "max_score": 0.0}
 
     hits = list(candidates.values())
     scores = get_reranker().predict([[query, hit["document"]] for hit in hits])
-
     for hit, score in zip(hits, scores):
         hit["score"] = 1 / (1 + math.exp(-float(score)))
 
     ranked_hits = sorted(hits, key=lambda item: (-item["score"], item["chunk_index"]))
     result = {"hits": ranked_hits, "max_score": ranked_hits[0]["score"]}
-    retrieval_cache[query] = result
+    retrieval_cache[ckey] = result
     return result
 
 
 def select_sources(hits: list[dict], limit: int = 3) -> list[dict]:
-    selected = []
-    seen = set()
-
+    selected, seen = [], set()
     for hit in hits:
-        if hit["source"] in seen:
-            continue
-
-        selected.append(
-            {
-                "source": hit["source"],
-                "score": round(hit["score"], 4),
-                "preview": hit["document"][:220].strip(),
-            }
-        )
+        if hit["source"] in seen: continue
+        selected.append({"source": hit["source"], "score": round(hit["score"], 4), "preview": hit["document"][:220].strip()})
         seen.add(hit["source"])
-
-        if len(selected) == limit:
-            break
-
+        if len(selected) == limit: break
     return selected
 
 
 def build_prompt(context: str, query: str, detailed: bool) -> str:
-    style_rule = (
-        "6. If the user asks for action items, tasks, steps, checklist, or what to do, "
-        "answer as a detailed bullet list with grouped items when possible.\n"
-        "7. Prefer summarizing the practical work items instead of copying raw lines.\n"
-        "8. Do not stop after a few bullets if the context clearly contains more relevant items."
-        if detailed
-        else
-        "6. Keep the answer concise and practical."
-    )
-
-    return f"""
-Rules:
-1. Use only the information in the context.
-2. If the context is insufficient, answer exactly "{NO_CONTEXT_ANSWER}".
-3. Do not invent facts.
-4. Answer in Korean unless the user explicitly requested another language.
-5. Make the answer accurate and easy to scan.
-{style_rule}
-
-Context:
-{context}
-
-Question:
-{query}
-""".strip()
+    style = "6. Detailed bullet list answer.\n7. Summarize items.\n8. Thorough context usage." if detailed else "6. Concise and practical."
+    return f"Rules:\n1. Use context only.\n2. Insufficient? Answer '{NO_CONTEXT_ANSWER}'.\n3. No invention.\n4. Korean.\n5. Accurate.\n{style}\n\nContext:\n{context}\n\nQuestion:\n{query}"
 
 
-def prepare_answer(query: str, model: str | None = None, history: list[dict] | None = None) -> dict:
-    retrieval = retrieve_context(query, model=model, history=history)
-    hits = retrieval["hits"]
-    max_score = retrieval["max_score"]
-    detailed = is_detailed_query(query)
+def prepare_answer(query: str, model: str | None = None, history: list[dict] | None = None, user_id: str = "") -> dict:
+    retrieval = retrieve_context(query, model=model, history=history, user_id=user_id)
+    hits, max_score, detailed = retrieval["hits"], retrieval["max_score"], is_detailed_query(query)
 
     if max_score < RELEVANCE_THRESHOLD:
-        return {
-            "enough_context": False,
-            "prompt": "",
-            "context": "",
-            "sources": [],
-            "score": round(max_score, 4),
-            "detailed": detailed,
-        }
+        return {"enough_context": False, "prompt": "", "context": "", "sources": [], "score": round(max_score, 4), "detailed": detailed}
 
     top_hits = hits[:6] if detailed else hits[:3]
     context = "\n\n".join(f"[Source: {hit['source']}]\n{hit['document']}" for hit in top_hits)
-
-    return {
-        "enough_context": True,
-        "prompt": build_prompt(context, query, detailed),
-        "context": context,
-        "sources": select_sources(top_hits),
-        "score": round(max_score, 4),
-        "detailed": detailed,
-    }
+    return {"enough_context": True, "prompt": build_prompt(context, query, detailed), "context": context, "sources": select_sources(top_hits), "score": round(max_score, 4), "detailed": detailed}
 
 
-def ask_rag(query: str, model: str | None = None, history: list[dict] | None = None) -> dict:
-    key = cache_key(query)
-    if key in query_cache:
-        return query_cache[key]
+def ask_rag(query: str, model: str | None = None, history: list[dict] | None = None, user_id: str = "") -> dict:
+    key = cache_key(query, user_id)
+    if key in query_cache: return query_cache[key]
 
-    target_model = model or CHAT_MODEL_NAME
-
-    # 1. 무의미한 입력 처리
     if is_meaningless(query):
-        result = {
-            "answer": "죄송합니다. 입력하신 내용을 이해하지 못했습니다. 질문을 구체적으로 입력해주시면 답변을 도와드릴 수 있습니다.",
-            "context": "",
-            "sources": [],
-            "score": 0.0,
-        }
-        query_cache[key] = result
-        return result
+        return {"answer": "이해하지 못했습니다.", "context": "", "sources": [], "score": 0.0}
 
-    # 2. 인사말인 경우 RAG를 생략하고 바로 답변
     if is_greeting(query):
-        messages = [
-            {"role": "system", "content": SYSTEM_MESSAGE},
-        ]
-        if history:
-            messages.extend(history[-3:])
-        messages.append({"role": "user", "content": query})
-        
-        response = ollama.chat(model=target_model, messages=messages)
-        result = {
-            "answer": response["message"]["content"].strip(),
-            "context": "",
-            "sources": [],
-            "score": 0.0,
-        }
-        query_cache[key] = result
-        return result
+        res = ollama.chat(model=model or CHAT_MODEL_NAME, messages=[{"role": "user", "content": query}])
+        return {"answer": res["message"]["content"], "context": "", "sources": [], "score": 0.0}
+    
+        # 🔥 추가 (여기 중요)
+    if not should_retrieve(query):
+        res = ollama.chat(model=model or CHAT_MODEL_NAME, messages=[{"role": "user", "content": query}])
+        return {"answer": res["message"]["content"], "context": "", "sources": [], "score": 0.0}
 
-    prepared = prepare_answer(query, model=model, history=history)
+    prepared = prepare_answer(query, model=model, history=history, user_id=user_id)
 
     if not prepared["enough_context"]:
-        result = {
-            "answer": NO_CONTEXT_ANSWER,
-            "context": "",
-            "sources": [],
-            "score": prepared["score"],
-        }
-        query_cache[key] = result
-        return result
+        return {"answer": NO_CONTEXT_ANSWER, "context": "", "sources": [], "score": prepared["score"]}
 
-    # 대화 내역 구성 (시스템 메시지 + 히스토리 + 현재 질문)
     messages = [{"role": "system", "content": SYSTEM_MESSAGE}]
-    if history:
-        messages.extend(history[-5:]) # 최근 5개 대화만 포함
+    if history: messages.extend(history[-5:])
     messages.append({"role": "user", "content": prepared["prompt"]})
 
-    response = ollama.chat(
-        model=target_model,
-        messages=messages,
-        options=DETAILED_GENERATION_OPTIONS if prepared["detailed"] else DEFAULT_GENERATION_OPTIONS,
-    )
-
-    result = {
-        "answer": response["message"]["content"].strip(),
-        "context": prepared["context"],
-        "sources": prepared["sources"],
-        "score": prepared["score"],
-        "done_reason": response.get("done_reason"),
-        "truncated": response.get("done_reason") == "length",
-    }
+    response = ollama.chat(model=model or CHAT_MODEL_NAME, messages=messages)
+    result = {"answer": response["message"]["content"].strip(), "context": prepared["context"], "sources": prepared["sources"], "score": prepared["score"]}
     query_cache[key] = result
     return result
 
 
-def ask_rag_stream(query: str, model: str | None = None, history: list[dict] | None = None):
-    target_model = model or CHAT_MODEL_NAME
-
-    # 1. 무의미한 입력 처리
+def ask_rag_stream(query: str, model: str | None = None, history: list[dict] | None = None, user_id: str = ""):
     if is_meaningless(query):
-        yield {"type": "status", "state": "thinking"}
         yield {"type": "meta", "sources": [], "context": "", "score": 0.0}
-        yield {"type": "chunk", "content": "죄송합니다. 입력하신 내용을 이해하지 못했습니다. 질문을 구체적으로 입력해주시면 답변을 도와드릴 수 있습니다."}
+        yield {"type": "chunk", "content": "이해하지 못했습니다."}
         return
 
-    # 2. 인사말인 경우 RAG를 생략하고 스트리밍 답변
     if is_greeting(query):
-        yield {"type": "status", "state": "thinking"}
         yield {"type": "meta", "sources": [], "context": "", "score": 0.0}
-        messages = [
-            {"role": "system", "content": SYSTEM_MESSAGE},
-        ]
-        if history:
-            messages.extend(history[-3:])
-        messages.append({"role": "user", "content": query})
-
-        stream = ollama.chat(model=target_model, messages=messages, stream=True)
+        stream = ollama.chat(model=model or CHAT_MODEL_NAME, messages=[{"role": "user", "content": query}], stream=True)
+        for chunk in stream:
+            content = chunk.get("message", {}).get("content", "")
+            if content: yield {"type": "chunk", "content": content}
+        return
+    
+    if not should_retrieve(query):
+        yield {"type": "meta", "sources": [], "context": "", "score": 0.0}
+        stream = ollama.chat(
+            model=model or CHAT_MODEL_NAME,
+            messages=[{"role": "user", "content": query}],
+            stream=True
+        )
         for chunk in stream:
             content = chunk.get("message", {}).get("content", "")
             if content:
-                yield {"type": "chunk", "content": content}
+              yield {"type": "chunk", "content": content}
         return
 
-    # 3. RAG 처리 - 검색 시작 알림
     yield {"type": "status", "state": "searching"}
-
-    prepared = prepare_answer(query, model=model, history=history)
-
-    # 메타 정보(검색 결과 등)를 답변 생성 전에 먼저 전송하여 세션 전환 시에도 정보가 보존되도록 함
-    meta = {
-        "type": "meta",
-        "sources": prepared["sources"],
-        "context": prepared["context"],
-        "score": prepared["score"],
-    }
-    yield meta
+    prepared = prepare_answer(query, model=model, history=history, user_id=user_id)
+    yield {"type": "meta", "sources": prepared["sources"], "context": prepared["context"], "score": prepared["score"]}
 
     if not prepared["enough_context"]:
         yield {"type": "chunk", "content": NO_CONTEXT_ANSWER}
         return
 
-    # 대화 내역 구성
     messages = [{"role": "system", "content": SYSTEM_MESSAGE}]
-    if history:
-        messages.extend(history[-5:])
+    if history: messages.extend(history[-5:])
     messages.append({"role": "user", "content": prepared["prompt"]})
 
-    stream = ollama.chat(
-        model=target_model,
-        messages=messages,
-        stream=True,
-        options=DETAILED_GENERATION_OPTIONS if prepared["detailed"] else DEFAULT_GENERATION_OPTIONS,
-    )
-
+    stream = ollama.chat(model=model or CHAT_MODEL_NAME, messages=messages, stream=True)
     for chunk in stream:
         content = chunk.get("message", {}).get("content", "")
-        if content:
-            yield {"type": "chunk", "content": content}
-
+        if content: yield {"type": "chunk", "content": content}

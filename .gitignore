@@ -15,6 +15,7 @@ env/
 # Database (ChromaDB local storage)
 db/
 
+
 # Frontend (Node)
 node_modules/
 frontend/node_modules/
@@ -38,5 +39,5 @@ Thumbs.db
 
 # Project specific
 # (Optional) If you want to exclude local documents from the repo
-# data/docs/*
-# !data/docs/.gitkeep
+data/docs/*
+!data/docs/.gitkeep

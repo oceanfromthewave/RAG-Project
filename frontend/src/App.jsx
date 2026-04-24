@@ -55,6 +55,20 @@ function TypingDots() {
 }
 
 function ConfirmModal({ isOpen, title, message, onConfirm, onCancel }) {
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        onConfirm();
+      } else if (e.key === "Escape") {
+        onCancel();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, onConfirm, onCancel]);
+
   if (!isOpen) return null;
   return (
     <div className="modal-backdrop" onClick={onCancel}>
@@ -63,7 +77,7 @@ function ConfirmModal({ isOpen, title, message, onConfirm, onCancel }) {
         <div className="modal-body"><p>{message}</p></div>
         <div className="modal-footer">
           <button type="button" className="btn-secondary" onClick={onCancel}>취소</button>
-          <button type="button" className="btn-danger" onClick={onConfirm}>삭제</button>
+          <button type="button" className="btn-danger" onClick={onConfirm} autoFocus>삭제</button>
         </div>
       </div>
     </div>

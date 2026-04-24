@@ -15,8 +15,18 @@ from backend.store import DB_DIR
 
 USERS_DB_PATH = DB_DIR / "users.db"
 
-# 운영 환경에서는 반드시 환경 변수로 교체하세요
-SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "rag-project-secret-key-change-in-production-!!!")
+import secrets
+
+# 운영 환경에서는 반드시 환경 변수(JWT_SECRET_KEY)를 설정하세요.
+# 설정되지 않은 경우, 매 서버 재시작마다 새로운 랜덤 키가 생성되어 
+# 기존에 발급된 모든 토큰이 무효화됩니다. (보안성 강화)
+_DEFAULT_SECRET = secrets.token_urlsafe(32)
+SECRET_KEY = os.environ.get("JWT_SECRET_KEY", _DEFAULT_SECRET)
+
+if SECRET_KEY == _DEFAULT_SECRET and os.environ.get("NODE_ENV") == "production":
+    # 운영 환경인데 비밀키가 설정되지 않은 경우 경고 (또는 에러 발생 가능)
+    print("WARNING: JWT_SECRET_KEY is not set in production. Using a random volatile key.")
+
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_DAYS = 7
 
@@ -70,10 +80,13 @@ def get_user_by_username(username: str) -> dict | None:
 
 
 def create_user(username: str, password: str) -> dict:
-    if len(username.strip()) < 2:
-        raise ValueError("사용자 이름은 2자 이상이어야 합니다.")
-    if len(password) < 4:
-        raise ValueError("비밀번호는 4자 이상이어야 합니다.")
+    username = username.strip()
+    if len(username) < 3:
+        raise ValueError("사용자 이름은 3자 이상이어야 합니다.")
+    if len(password) < 8:
+        raise ValueError("비밀번호는 8자 이상이어야 합니다.")
+    if not any(char.isdigit() for char in password) and not any(not char.isalnum() for char in password):
+        raise ValueError("비밀번호는 숫자나 특수문자를 최소 하나 이상 포함해야 합니다.")
     if len(password.encode("utf-8")) > 72:
         raise ValueError("비밀번호는 72바이트를 초과할 수 없습니다.")
     if get_user_by_username(username):

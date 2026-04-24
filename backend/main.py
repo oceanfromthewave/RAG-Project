@@ -1,16 +1,29 @@
 from __future__ import annotations
 
+import os
 import json
 import shutil
+import logging
 from pathlib import Path
 from uuid import uuid4
 
 import ollama
-from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile, status
+from dotenv import load_dotenv
+from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
+
+# .env 로드
+load_dotenv()
+
+# 로깅 설정
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger("security")
 
 from backend.auth import (
     Token,
@@ -22,6 +35,7 @@ from backend.auth import (
     get_user_by_username,
     verify_password,
 )
+from backend.security import login_limiter, register_limiter, login_guard, get_client_ip
 from backend.history import (
     add_message,
     create_session,
@@ -54,11 +68,27 @@ from backend.store import (
 
 app = FastAPI(title="Internal RAG API")
 
+# 환경 변수 설정
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
+MAX_UPLOAD_SIZE = int(os.getenv("MAX_UPLOAD_SIZE", 10485760)) # 기본 10MB
+ALLOWED_EXTENSIONS = {".txt", ".pdf", ".docx"}
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    # 단순한 CSP 예시
+    response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none';"
+    return response
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-    allow_credentials=False,
-    allow_methods=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -87,12 +117,14 @@ ensure_storage_dirs()
 # ── 유틸리티 ───────────────────────────────────────────────
 
 def save_upload(file: UploadFile, target_path: Path):
+    target_path.parent.mkdir(parents=True, exist_ok=True)
     with target_path.open("wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
 
-def build_upload_temp_path(source_name: str) -> Path:
-    return DATA_DIR / f".upload-{uuid4().hex}{Path(source_name).suffix}"
+def build_upload_temp_path(source_name: str, user_id: str = "") -> Path:
+    prefix = f"{user_id}-" if user_id else ""
+    return DATA_DIR / f".upload-{prefix}{uuid4().hex}{Path(source_name).suffix}"
 
 
 # ── 기본 엔드포인트 ────────────────────────────────────────
@@ -103,11 +135,15 @@ def root():
 
 
 @app.get("/stats")
-def get_stats():
-    sources = list_indexed_sources()
+def get_stats(current_user: UserInfo = Depends(get_current_user)):
+    sources = list_indexed_sources(user_id=current_user.id)
+    # count()는 where 필터를 지원하지 않으므로 get()을 사용
+    results = get_collection().get(where={"user_id": current_user.id}, include=[])
+    total_chunks = len(results.get("ids") or [])
+    
     return {
         "indexed_files": len(sources),
-        "total_chunks": get_collection().count(),
+        "total_chunks": total_chunks,
         "embed_model": EMBED_MODEL_NAME,
         "reranker_model": RERANK_MODEL_NAME,
         "chat_model": CHAT_MODEL_NAME,
@@ -130,8 +166,11 @@ def list_models():
 # ── 인증 엔드포인트 ────────────────────────────────────────
 
 @app.post("/auth/register", response_model=Token, status_code=201)
-def register(body: UserCreate):
+def register(request: Request, body: UserCreate):
     """신규 사용자 등록 후 즉시 토큰 반환."""
+    # 속도 제한 적용 (5분에 5회)
+    register_limiter.check(request)
+
     try:
         user = create_user(body.username, body.password)
     except ValueError as exc:
@@ -142,15 +181,26 @@ def register(body: UserCreate):
 
 
 @app.post("/auth/login", response_model=Token)
-def login(form: OAuth2PasswordRequestForm = Depends()):
+def login(request: Request, form: OAuth2PasswordRequestForm = Depends()):
     """사용자 이름 + 비밀번호로 로그인, JWT 반환."""
+    # 속도 제한 및 계정 잠금 체크
+    login_limiter.check(request)
+    ip = get_client_ip(request)
+    login_guard.check(form.username, ip)
+
     user = get_user_by_username(form.username)
     if not user or not verify_password(form.password, user["hashed_password"]):
+        # 실패 기록
+        login_guard.record_failure(form.username, ip)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="사용자 이름 또는 비밀번호가 올바르지 않습니다.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # 성공 시 실패 기록 초기화
+    login_guard.clear(form.username, ip)
+
     token = create_access_token(user["id"], user["username"])
     return Token(access_token=token, token_type="bearer", username=user["username"])
 
@@ -214,7 +264,7 @@ def ask(question: Question, current_user: UserInfo = Depends(get_current_user)):
             raise HTTPException(status_code=403, detail="이 세션에 접근할 권한이 없습니다.")
 
     add_message(current_session_id, "user", question.query)
-    result = ask_rag(question.query, model=question.model, history=history_dicts)
+    result = ask_rag(question.query, model=question.model, history=history_dicts, user_id=current_user.id)
     add_message(
         current_session_id,
         "assistant",
@@ -254,7 +304,7 @@ def ask_stream(question: Question, current_user: UserInfo = Depends(get_current_
         meta = None
 
         try:
-            for event in ask_rag_stream(question.query, model=question.model, history=history_dicts):
+            for event in ask_rag_stream(question.query, model=question.model, history=history_dicts, user_id=current_user.id):
                 if event["type"] == "chunk":
                     full_answer += event["content"]
                 elif event["type"] == "meta":
@@ -288,15 +338,34 @@ async def upload(
     file: UploadFile = File(...),
     current_user: UserInfo = Depends(get_current_user),
 ):
+    # 파일 확장자 검증
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"허용되지 않는 파일 형식입니다. ({', '.join(ALLOWED_EXTENSIONS)} 만 가능)"
+        )
+
+    # 파일 크기 검증 (파일을 읽기 전에 headers의 content-length 확인)
+    # Note: 일부 클라이언트는 content-length를 보내지 않을 수 있으므로 실제 읽을 때도 체크 필요
+    content_length = file.size if hasattr(file, "size") else 0
+    if content_length > MAX_UPLOAD_SIZE:
+        raise HTTPException(status_code=413, detail="파일 용량이 너무 큽니다. (최대 10MB)")
+
     temp_path: Path | None = None
+    logger.info(f"User {current_user.username} is uploading file: {file.filename}")
 
     try:
         source_name = normalize_source_name(file.filename or "")
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
-    target_path = DATA_DIR / source_name
-    temp_path = build_upload_temp_path(source_name)
+    # 사용자별 폴더에 저장
+    user_data_dir = DATA_DIR / current_user.id
+    user_data_dir.mkdir(parents=True, exist_ok=True)
+    
+    target_path = user_data_dir / source_name
+    temp_path = build_upload_temp_path(source_name, user_id=current_user.id)
 
     try:
         save_upload(file, temp_path)
@@ -310,10 +379,12 @@ async def upload(
         raise HTTPException(status_code=400, detail="읽을 수 있는 텍스트가 없는 파일입니다.")
 
     try:
-        chunks = index_document(source_name, text)
-        temp_path.replace(target_path)
+        chunks = index_document(source_name, text, user_id=current_user.id)
+        # 덮어쓰기 허용을 위해 shutil.move 사용
+        shutil.move(str(temp_path), str(target_path))
     except Exception as error:
-        raise HTTPException(status_code=500, detail="문서 인덱싱 중 오류가 발생했습니다.") from error
+        logger.error(f"Indexing error: {error}")
+        raise HTTPException(status_code=500, detail=f"문서 인덱싱 중 오류가 발생했습니다: {str(error)}")
     finally:
         if temp_path is not None:
             temp_path.unlink(missing_ok=True)
@@ -327,29 +398,35 @@ async def upload(
 
 
 @app.get("/files")
-def get_files(_: UserInfo = Depends(get_current_user)):
-    files = sorted(path.name for path in DATA_DIR.iterdir() if path.is_file())
+def get_files(current_user: UserInfo = Depends(get_current_user)):
+    user_data_dir = DATA_DIR / current_user.id
+    if not user_data_dir.exists():
+        return {"count": 0, "files": []}
+    
+    files = sorted(path.name for path in user_data_dir.iterdir() if path.is_file())
     return {"count": len(files), "files": files}
 
 
 @app.get("/files-db")
-def get_files_from_db(_: UserInfo = Depends(get_current_user)):
-    files = list_indexed_sources()
+def get_files_from_db(current_user: UserInfo = Depends(get_current_user)):
+    files = list_indexed_sources(user_id=current_user.id)
     return {"count": len(files), "files": files}
 
 
 @app.delete("/file")
-def delete_file(name: str = Query(...), _: UserInfo = Depends(get_current_user)):
+def delete_file(name: str = Query(...), current_user: UserInfo = Depends(get_current_user)):
     try:
         source_name = normalize_source_name(name)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
-    target_path = DATA_DIR / source_name
+    user_data_dir = DATA_DIR / current_user.id
+    target_path = user_data_dir / source_name
+    
     if not target_path.exists():
-        raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다.")
+        raise HTTPException(status_code=404, detail="파일을 찾을 수 없거나 권한이 없습니다.")
 
-    deleted_chunks = delete_source(source_name)
+    deleted_chunks = delete_source(source_name, user_id=current_user.id)
     target_path.unlink()
     clear_caches()
 
