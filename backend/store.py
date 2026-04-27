@@ -5,6 +5,7 @@ from hashlib import sha1
 from pathlib import Path
 
 import chromadb
+from docx import Document as DocxDocument
 from pypdf import PdfReader
 from sentence_transformers import CrossEncoder, SentenceTransformer
 
@@ -17,7 +18,7 @@ EMBED_MODEL_NAME = "BAAI/bge-m3"
 RERANK_MODEL_NAME = "BAAI/bge-reranker-v2-m3"
 CHAT_MODEL_NAME = "mistral"
 ALLOWED_SUFFIXES = {
-    ".txt", ".pdf", ".py", ".js", ".ts", ".jsx", ".tsx", 
+    ".txt", ".pdf", ".docx", ".py", ".js", ".ts", ".jsx", ".tsx",
     ".html", ".css", ".json", ".md", ".java", ".c", ".cpp", ".h", ".go"
 }
 
@@ -76,11 +77,19 @@ def read_pdf(path: Path) -> str:
     return "".join(page.extract_text() or "" for page in reader.pages)
 
 
+def read_docx(path: Path) -> str:
+    doc = DocxDocument(str(path))
+    return "\n".join(paragraph.text for paragraph in doc.paragraphs if paragraph.text.strip())
+
+
 def read_document(path: Path) -> str:
     suffix = path.suffix.lower()
 
     if suffix == ".pdf":
         return read_pdf(path)
+
+    if suffix == ".docx":
+        return read_docx(path)
 
     if suffix in ALLOWED_SUFFIXES:
         return read_txt(path)

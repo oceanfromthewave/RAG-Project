@@ -38,12 +38,16 @@
   width: 30px;
   height: 30px;
   border-radius: var(--r-sm);
-  background: var(--accent);
+  /* background: var(--ac/ent); */
   flex-shrink: 0;
+  overflow: hidden;
 }
 
-.brand-mark svg {
+.brand-mark img {
   display: block;
+  width: 70%;
+  height: 70%;
+  object-fit: contain;
 }
 
 .brand-name {

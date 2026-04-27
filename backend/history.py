@@ -3,13 +3,11 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import datetime
-from pathlib import Path
 from uuid import uuid4
 
 from backend.store import DB_DIR
 
 HISTORY_DB_PATH = DB_DIR / "history.db"
-
 
 def init_db():
     DB_DIR.mkdir(parents=True, exist_ok=True)

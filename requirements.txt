@@ -4,6 +4,7 @@ chromadb
 sentence-transformers
 ollama
 pypdf
+python-docx
 python-multipart
 python-jose[cryptography]
 passlib[bcrypt]

@@ -62,10 +62,7 @@ export default function LoginPage() {
         {/* 로고 */}
         <div className="login-brand">
           <div className="brand-mark large" aria-hidden="true">
-            <svg width="24" height="24" viewBox="0 0 16 16" fill="none">
-              <path d="M8 1L14 4.5V11.5L8 15L2 11.5V4.5L8 1Z" fill="white" fillOpacity="0.9" />
-              <path d="M8 5L11 6.75V10.25L8 12L5 10.25V6.75L8 5Z" fill="white" fillOpacity="0.35" />
-            </svg>
+            <img src="/favicon-transparent.png" alt="" />
           </div>
           <span className="login-title">acanet Workspace</span>
         </div>

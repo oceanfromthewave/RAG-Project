@@ -478,6 +478,7 @@ function AuthenticatedApp({ authFetch, user, logout }) {
           const event = JSON.parse(line);
 
           if (event.type === "session") {
+            // 새 세션 ID 확정 — 임시 키를 실제 키로 교체
             actualSessionId = event.session_id;
             activeStreamsRef.current.delete(tempSessionId);
             activeStreamsRef.current.set(actualSessionId, controller);
@@ -491,6 +492,15 @@ function AuthenticatedApp({ authFetch, user, logout }) {
               prev === null || prev?.startsWith?.("temp-") ? actualSessionId : prev
             );
             refreshSidebar();
+
+          } else if (event.type === "title") {
+            // ── 세션 제목 자동 생성 완료 ──────────────────────
+            // 서버가 답변 완료 후 LLM으로 생성한 제목을 받아 사이드바를 즉시 갱신.
+            // refreshSidebar() 없이 로컬 state만 업데이트하므로 네트워크 요청 0회.
+            setSessions(prev =>
+              prev.map(s => s.id === event.session_id ? { ...s, title: event.title } : s)
+            );
+
           } else {
             processStreamLine(line, assistantId, actualSessionId || tempSessionId);
           }
@@ -633,10 +643,7 @@ function AuthenticatedApp({ authFetch, user, logout }) {
 
         <div className="brand" onClick={handleResetChat} role="button" title="새 채팅 시작">
           <div className="brand-mark" aria-hidden="true">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <path d="M8 1L14 4.5V11.5L8 15L2 11.5V4.5L8 1Z" fill="white" fillOpacity="0.9" />
-              <path d="M8 5L11 6.75V10.25L8 12L5 10.25V6.75L8 5Z" fill="white" fillOpacity="0.35" />
-            </svg>
+            <img src="/favicon-transparent.png" alt="" />
           </div>
           <span className="brand-name">acanet Workspace</span>
         </div>

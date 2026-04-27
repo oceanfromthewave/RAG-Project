@@ -51,6 +51,8 @@ from backend.rag import (
     ask_rag,
     ask_rag_stream,
     clear_caches,
+    generate_session_title,
+    should_retrieve,
 )
 from backend.store import (
     CHAT_MODEL_NAME,
@@ -80,7 +82,6 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-    # 단순한 CSP 예시
     response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none';"
     return response
 
@@ -137,7 +138,6 @@ def root():
 @app.get("/stats")
 def get_stats(current_user: UserInfo = Depends(get_current_user)):
     sources = list_indexed_sources(user_id=current_user.id)
-    # count()는 where 필터를 지원하지 않으므로 get()을 사용
     results = get_collection().get(where={"user_id": current_user.id}, include=[])
     total_chunks = len(results.get("ids") or [])
     
@@ -168,7 +168,6 @@ def list_models():
 @app.post("/auth/register", response_model=Token, status_code=201)
 def register(request: Request, body: UserCreate):
     """신규 사용자 등록 후 즉시 토큰 반환."""
-    # 속도 제한 적용 (5분에 5회)
     register_limiter.check(request)
 
     try:
@@ -183,14 +182,12 @@ def register(request: Request, body: UserCreate):
 @app.post("/auth/login", response_model=Token)
 def login(request: Request, form: OAuth2PasswordRequestForm = Depends()):
     """사용자 이름 + 비밀번호로 로그인, JWT 반환."""
-    # 속도 제한 및 계정 잠금 체크
     login_limiter.check(request)
     ip = get_client_ip(request)
     login_guard.check(form.username, ip)
 
     user = get_user_by_username(form.username)
     if not user or not verify_password(form.password, user["hashed_password"]):
-        # 실패 기록
         login_guard.record_failure(form.username, ip)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -198,7 +195,6 @@ def login(request: Request, form: OAuth2PasswordRequestForm = Depends()):
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # 성공 시 실패 기록 초기화
     login_guard.clear(form.username, ip)
 
     token = create_access_token(user["id"], user["username"])
@@ -252,6 +248,7 @@ def rename_session(
 
 @app.post("/ask")
 def ask(question: Question, current_user: UserInfo = Depends(get_current_user)):
+
     history_dicts = [m.model_dump() for m in question.history] if question.history else []
 
     current_session_id = question.session_id
@@ -264,7 +261,26 @@ def ask(question: Question, current_user: UserInfo = Depends(get_current_user)):
             raise HTTPException(status_code=403, detail="이 세션에 접근할 권한이 없습니다.")
 
     add_message(current_session_id, "user", question.query)
-    result = ask_rag(question.query, model=question.model, history=history_dicts, user_id=current_user.id)
+
+    if not should_retrieve(question.query):
+        res = ollama.chat(
+            model=CHAT_MODEL_NAME,
+            messages=[{"role": "user", "content": question.query}]
+        )
+        result = {
+            "answer": res["message"]["content"],
+            "context": "",
+            "sources": [],
+            "score": 0.0
+        }
+    else:
+        result = ask_rag(
+            question.query,
+            model=question.model,
+            history=history_dicts,
+            user_id=current_user.id
+        )
+
     add_message(
         current_session_id,
         "assistant",
@@ -286,8 +302,9 @@ def ask_stream(question: Question, current_user: UserInfo = Depends(get_current_
     is_new_session = False
 
     if not current_session_id:
-        title = (question.query[:30] + "...") if len(question.query) > 30 else question.query
-        current_session_id = create_session(title=title, model=question.model, user_id=current_user.id)
+        # 임시 제목으로 세션 생성 (스트림 완료 후 LLM 제목으로 교체됨)
+        temp_title = (question.query[:30] + "...") if len(question.query) > 30 else question.query
+        current_session_id = create_session(title=temp_title, model=question.model, user_id=current_user.id)
         is_new_session = True
     else:
         owner = get_session_owner(current_session_id)
@@ -302,6 +319,7 @@ def ask_stream(question: Question, current_user: UserInfo = Depends(get_current_
 
         full_answer = ""
         meta = None
+        stream_completed = False  # 스트림 정상 완료 여부 추적
 
         try:
             for event in ask_rag_stream(question.query, model=question.model, history=history_dicts, user_id=current_user.id):
@@ -310,7 +328,11 @@ def ask_stream(question: Question, current_user: UserInfo = Depends(get_current_
                 elif event["type"] == "meta":
                     meta = event
                 yield json.dumps(event, ensure_ascii=False) + "\n"
+
+            stream_completed = True  # for 루프를 정상적으로 다 돌았을 때만 True
+
         finally:
+            # 스트림 완료·중단 여부 관계없이 답변은 항상 저장
             if full_answer.strip() or meta:
                 final_content = full_answer
                 if not final_content.strip():
@@ -328,6 +350,21 @@ def ask_stream(question: Question, current_user: UserInfo = Depends(get_current_
                     score=meta.get("score") if meta else 0.0,
                 )
 
+        # ── 세션 제목 자동 생성 ──────────────────────────────
+        # 새 세션이고 스트림이 정상 완료됐고 답변이 있을 때만 실행
+        if is_new_session and stream_completed and full_answer.strip():
+            try:
+                title = generate_session_title(question.query, full_answer, question.model)
+                update_session_title(current_session_id, title, user_id=current_user.id)
+                logger.info(f"세션 제목 자동 생성: '{title}' (session={current_session_id})")
+                yield json.dumps(
+                    {"type": "title", "session_id": current_session_id, "title": title},
+                    ensure_ascii=False,
+                ) + "\n"
+            except Exception as exc:
+                # 제목 생성 실패는 치명적이지 않으므로 경고만 기록
+                logger.warning(f"세션 제목 자동 생성 실패: {exc}")
+
     return StreamingResponse(generator(), media_type="application/x-ndjson")
 
 
@@ -338,7 +375,6 @@ async def upload(
     file: UploadFile = File(...),
     current_user: UserInfo = Depends(get_current_user),
 ):
-    # 파일 확장자 검증
     ext = Path(file.filename or "").suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(
@@ -346,8 +382,6 @@ async def upload(
             detail=f"허용되지 않는 파일 형식입니다. ({', '.join(ALLOWED_EXTENSIONS)} 만 가능)"
         )
 
-    # 파일 크기 검증 (파일을 읽기 전에 headers의 content-length 확인)
-    # Note: 일부 클라이언트는 content-length를 보내지 않을 수 있으므로 실제 읽을 때도 체크 필요
     content_length = file.size if hasattr(file, "size") else 0
     if content_length > MAX_UPLOAD_SIZE:
         raise HTTPException(status_code=413, detail="파일 용량이 너무 큽니다. (최대 10MB)")
@@ -360,7 +394,6 @@ async def upload(
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
-    # 사용자별 폴더에 저장
     user_data_dir = DATA_DIR / current_user.id
     user_data_dir.mkdir(parents=True, exist_ok=True)
     
@@ -380,7 +413,6 @@ async def upload(
 
     try:
         chunks = index_document(source_name, text, user_id=current_user.id)
-        # 덮어쓰기 허용을 위해 shutil.move 사용
         shutil.move(str(temp_path), str(target_path))
     except Exception as error:
         logger.error(f"Indexing error: {error}")

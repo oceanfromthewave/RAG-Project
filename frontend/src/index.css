@@ -27,12 +27,12 @@
   --line-strong:    rgba(28, 22, 16, 0.15);
 
   /* ── 강조색 ── */
-  --accent:         #ff6e3c;
-  --accent-hover:   #f05828;
-  --accent-glow:    rgba(255, 110, 60, 0.16);
-  --accent-light:   rgba(255, 110, 60, 0.1);
-  --accent-lighter: rgba(255, 110, 60, 0.04);
-  --accent-focus:   rgba(255, 110, 60, 0.35);
+  --accent:         #3186C0;
+  --accent-hover:   #0d6aa8;
+  --accent-glow:    rgba(87, 151, 255, 0.16);
+  --accent-light:   rgba(27, 68, 254, 0.1);
+  --accent-lighter: rgba(42, 56, 255, 0.04);
+  --accent-focus:   rgba(50, 73, 247, 0.35);
   --accent-focus-bg: rgba(255, 110, 60, 0.07);
   --accent-cool:    #6e9bff;
 

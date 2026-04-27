@@ -48,21 +48,22 @@ def is_detailed_query(query: str) -> bool:
 def should_retrieve(query: str) -> bool:
     text = query.strip().lower()
 
-    # 너무 짧으면 검색 안함
+    # 너무 짧으면 컷
     if len(text) < 5:
         return False
 
-    # 질문 키워드
-    question_keywords = [
+    # 질문 키워드 기반
+    keywords = [
         "뭐", "무엇", "왜", "어떻게", "설명", "알려", "차이",
         "방법", "이유", "가능", "언제", "어디",
+        "rag", "세션", "문서", "db", "api",
         "what", "why", "how", "explain", "difference"
     ]
 
-    if any(k in text for k in question_keywords):
+    if any(k in text for k in keywords):
         return True
 
-    # 단어 2개 이상이면 최소한 검색 허용
+    # 명사형 질문 (단어 2개 이상)
     if len(text.split()) >= 2:
         return True
 
@@ -84,27 +85,21 @@ def is_meaningless(query: str) -> bool:
     if len(text) <= 1:
         return True
     
-    # 1. 한글 자음/모음만 있거나 특수문자만 있는 경우 (이미 존재)
     if re.match(r"^[ㄱ-ㅎㅏ-ㅣ\s!?.~^]+$", text):
         return True
         
-    # 2. 자음/모음 비율이 너무 높은 경우 (단어가 아닌 연타)
-    # 한글 완성형 단어 없이 자음/모음이 섞여 있는 경우를 위해 정규식 확장
     if re.search(r"[ㄱ-ㅎㅏ-ㅣ]{3,}", text):
         return True
 
-    # 3. 같은 글자가 3번 이상 반복되는 경우 (예: aaaaa, ㅋㅋㅋㅋ)
     if re.search(r"(.)\1\1+", text):
         return True
 
-    # 4. 영문/숫자 조합에서 모음이 없거나 너무 긴 무의미 문자열
     if re.match(r"^[a-zA-Z0-9\s!?.~^]+$", text):
         if len(text) > 3 and not re.search(r"[aeiouAEIOU]", text):
             return True
         if text.isdigit() and len(text) > 5:
             return True
 
-    # 5. 키보드 배열 연타 (한글/영문)
     mashing_patterns = [
         "asdf", "qwer", "zxcv", "asdasd", "qwerty",
         "ㅁㄴㅇㄹ", "ㅂㅈㄷㄱ", "ㅋㅌㅊㅍ", "ㅗㅓㅏㅣ", "ㅐㅔ"
@@ -113,10 +108,7 @@ def is_meaningless(query: str) -> bool:
     if any(pattern in low_text for pattern in mashing_patterns):
         return True
     
-    # 6. 한글 자음/모음과 영문이 섞여있는데 전체적으로 짧고 의미 없어 보이는 경우
-    # (예: ㅁㄴㅇㄹasdf)
     if re.search(r"[ㄱ-ㅎㅏ-ㅣ]+", text) and re.search(r"[a-zA-Z]+", text):
-        # 완성된 한글 글자(가-힣)가 하나도 없으면 무의미한 혼용으로 간주
         if not re.search(r"[가-힣]", text):
             return True
 
@@ -233,11 +225,18 @@ def ask_rag(query: str, model: str | None = None, history: list[dict] | None = N
     if is_greeting(query):
         res = ollama.chat(model=model or CHAT_MODEL_NAME, messages=[{"role": "user", "content": query}])
         return {"answer": res["message"]["content"], "context": "", "sources": [], "score": 0.0}
-    
-        # 🔥 추가 (여기 중요)
+
     if not should_retrieve(query):
-        res = ollama.chat(model=model or CHAT_MODEL_NAME, messages=[{"role": "user", "content": query}])
-        return {"answer": res["message"]["content"], "context": "", "sources": [], "score": 0.0}
+        res = ollama.chat(
+            model=model or CHAT_MODEL_NAME,
+            messages=[{"role": "user", "content": query}]
+        )
+        return {
+            "answer": res["message"]["content"],
+            "context": "",
+            "sources": [],
+            "score": 0.0
+        }
 
     prepared = prepare_answer(query, model=model, history=history, user_id=user_id)
 
@@ -267,18 +266,20 @@ def ask_rag_stream(query: str, model: str | None = None, history: list[dict] | N
             content = chunk.get("message", {}).get("content", "")
             if content: yield {"type": "chunk", "content": content}
         return
-    
+
     if not should_retrieve(query):
         yield {"type": "meta", "sources": [], "context": "", "score": 0.0}
+
         stream = ollama.chat(
             model=model or CHAT_MODEL_NAME,
             messages=[{"role": "user", "content": query}],
             stream=True
         )
+
         for chunk in stream:
             content = chunk.get("message", {}).get("content", "")
             if content:
-              yield {"type": "chunk", "content": content}
+                yield {"type": "chunk", "content": content}
         return
 
     yield {"type": "status", "state": "searching"}
@@ -297,3 +298,42 @@ def ask_rag_stream(query: str, model: str | None = None, history: list[dict] | N
     for chunk in stream:
         content = chunk.get("message", {}).get("content", "")
         if content: yield {"type": "chunk", "content": content}
+
+
+# ── 세션 제목 자동 생성 ────────────────────────────────────
+
+def generate_session_title(query: str, answer: str, model: str | None = None) -> str:
+    """질문과 답변을 바탕으로 세션 제목을 LLM으로 생성한다.
+
+    - 15자 이내 한국어 명사형 제목
+    - 실패 시 query 앞 15자로 폴백
+    """
+    target_model = model or CHAT_MODEL_NAME
+
+    prompt = (
+        "아래 대화의 핵심 주제를 한국어 명사형으로 15자 이내 제목 하나만 만들어줘.\n"
+        "규칙: 제목 텍스트만 출력. 따옴표·번호·기호·설명 없이.\n\n"
+        f"질문: {query[:200]}\n"
+        f"답변: {answer[:400]}\n\n"
+        "제목:"
+    )
+
+    try:
+        response = ollama.chat(
+            model=target_model,
+            messages=[{"role": "user", "content": prompt}],
+            options={"temperature": 0.3, "num_predict": 25},
+        )
+        raw = response["message"]["content"].strip()
+
+        # 앞쪽 번호·기호·공백 제거 (예: "1. ", "- ")
+        cleaned = re.sub(r'^[\d\.\)\-\s"\'「」『』【】\[\]]+', "", raw).strip()
+        # 감싸는 따옴표·괄호 제거
+        cleaned = cleaned.strip("\"'「」『』【】[]")
+        # 첫 줄만 사용 (모델이 여러 줄을 뱉는 경우 대비)
+        cleaned = cleaned.splitlines()[0].strip() if cleaned else ""
+        # 15자 초과 시 자르기
+        title = cleaned[:15] if cleaned else query[:15]
+        return title
+    except Exception:
+        return query[:15]

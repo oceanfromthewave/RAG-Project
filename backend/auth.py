@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import os
 import sqlite3
+
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
-
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
