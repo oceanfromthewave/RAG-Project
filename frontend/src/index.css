@@ -89,9 +89,6 @@ body {
   min-height: 100dvh;
   /* 따뜻한 그라디언트로 공간감 부여 */
   background-color: var(--bg);
-  background-image:
-    radial-gradient(ellipse 72% 52% at 0% 0%,   rgba(255, 120, 58, 0.07)  0%, transparent 100%),
-    radial-gradient(ellipse 50% 50% at 100% 100%, rgba(210, 175, 130, 0.05) 0%, transparent 100%);
 }
 
 button, input, textarea {
@@ -127,8 +124,7 @@ a  { color: inherit; }
   #root {
     padding: 10px;
     gap: 8px;
-    height: auto;
-    min-height: 100dvh;
+    height: 100dvh; /* auto에서 변경하여 레이아웃 붕괴 방지 */
   }
 }
 

@@ -23,7 +23,6 @@ export default function LoginPage() {
       let res;
 
       if (mode === "login") {
-        // OAuth2PasswordRequestForm 형식 (application/x-www-form-urlencoded)
         const body = new URLSearchParams({ username: username.trim(), password });
         res = await fetch(`${API_BASE}/auth/login`, {
           method: "POST",
@@ -34,7 +33,10 @@ export default function LoginPage() {
         res = await fetch(`${API_BASE}/auth/register`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ username: username.trim(), password }),
+          body: JSON.stringify({ 
+            username: username.trim(), 
+            password
+          }),
         });
       }
 
@@ -44,9 +46,9 @@ export default function LoginPage() {
         return;
       }
 
-      login(data.access_token, data.username);
+      login(data.access_token, data.username, data.is_admin);
     } catch {
-      setError("서버에 연결할 수 없습니다. 백엔드가 실행 중인지 확인해주세요.");
+      setError("서버에 연결할 수 없습니다. 서버 상태를 확인해주십시오.");
     } finally {
       setLoading(false);
     }

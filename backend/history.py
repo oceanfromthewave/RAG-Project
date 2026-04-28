@@ -36,6 +36,7 @@ def init_db():
                 sources    TEXT,
                 context    TEXT,
                 score      REAL,
+                feedback   INTEGER DEFAULT 0,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (session_id) REFERENCES sessions (id) ON DELETE CASCADE
             )
@@ -45,6 +46,10 @@ def init_db():
         existing_cols = {row[1] for row in cursor.execute("PRAGMA table_info(sessions)")}
         if "user_id" not in existing_cols:
             cursor.execute("ALTER TABLE sessions ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
+
+        existing_msg_cols = {row[1] for row in cursor.execute("PRAGMA table_info(messages)")}
+        if "feedback" not in existing_msg_cols:
+            cursor.execute("ALTER TABLE messages ADD COLUMN feedback INTEGER DEFAULT 0")
 
         conn.commit()
 
@@ -158,6 +163,22 @@ def update_session_title(session_id: str, title: str, user_id: str = ""):
                 "UPDATE sessions SET title = ? WHERE id = ?", (title, session_id)
             )
         conn.commit()
+
+
+def update_message_feedback(message_id: str, feedback: int, user_id: str = ""):
+    """메시지 피드백 업데이트 (1: 좋음, -1: 싫음, 0: 취소)."""
+    with sqlite3.connect(HISTORY_DB_PATH) as conn:
+        if user_id:
+            cursor = conn.execute("""
+                UPDATE messages 
+                SET feedback = ? 
+                WHERE id = ? AND session_id IN (SELECT id FROM sessions WHERE user_id = ?)
+            """, (feedback, message_id, user_id))
+        else:
+            cursor = conn.execute("UPDATE messages SET feedback = ? WHERE id = ?", (feedback, message_id))
+        
+        conn.commit()
+        return cursor.rowcount > 0
 
 
 # 모듈 import 시 DB 초기화

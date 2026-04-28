@@ -45,11 +45,13 @@ class Token(BaseModel):
     access_token: str
     token_type: str
     username: str
+    is_admin: bool
 
 
 class UserInfo(BaseModel):
     id: str
     username: str
+    is_admin: bool
 
 
 # ── DB 초기화 ──────────────────────────────────────────────
@@ -62,9 +64,17 @@ def init_users_db():
                 id              TEXT PRIMARY KEY,
                 username        TEXT UNIQUE NOT NULL,
                 hashed_password TEXT NOT NULL,
+                is_admin        INTEGER NOT NULL DEFAULT 0,
                 created_at      TEXT NOT NULL
             )
         """)
+        
+        # 기존 DB 마이그레이션: is_admin 컬럼이 없으면 추가
+        cursor = conn.cursor()
+        existing_cols = {row[1] for row in cursor.execute("PRAGMA table_info(users)")}
+        if "is_admin" not in existing_cols:
+            cursor.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
+            
         conn.commit()
 
 
@@ -76,7 +86,11 @@ def get_user_by_username(username: str) -> dict | None:
         row = conn.execute(
             "SELECT * FROM users WHERE username = ?", (username,)
         ).fetchone()
-        return dict(row) if row else None
+        if row:
+            d = dict(row)
+            d["is_admin"] = bool(d["is_admin"])
+            return d
+        return None
 
 
 def create_user(username: str, password: str) -> dict:
@@ -85,10 +99,6 @@ def create_user(username: str, password: str) -> dict:
         raise ValueError("사용자 이름은 3자 이상이어야 합니다.")
     if len(password) < 8:
         raise ValueError("비밀번호는 8자 이상이어야 합니다.")
-    if not any(char.isdigit() for char in password) and not any(not char.isalnum() for char in password):
-        raise ValueError("비밀번호는 숫자나 특수문자를 최소 하나 이상 포함해야 합니다.")
-    if len(password.encode("utf-8")) > 72:
-        raise ValueError("비밀번호는 72바이트를 초과할 수 없습니다.")
     if get_user_by_username(username):
         raise ValueError("이미 사용 중인 사용자 이름입니다.")
 
@@ -98,12 +108,23 @@ def create_user(username: str, password: str) -> dict:
 
     with sqlite3.connect(USERS_DB_PATH) as conn:
         conn.execute(
-            "INSERT INTO users (id, username, hashed_password, created_at) VALUES (?, ?, ?, ?)",
-            (user_id, username.strip(), hashed, now),
+            "INSERT INTO users (id, username, hashed_password, is_admin, created_at) VALUES (?, ?, ?, 0, ?)",
+            (user_id, username, hashed, now),
         )
         conn.commit()
 
-    return {"id": user_id, "username": username.strip()}
+    return {"id": user_id, "username": username, "is_admin": False}
+
+
+def update_user_role(user_id: str, is_admin: bool) -> bool:
+    """사용자의 관리자 권한 여부를 업데이트합니다. 성공 시 True, 사용자 미존재 시 False 반환."""
+    with sqlite3.connect(USERS_DB_PATH) as conn:
+        cursor = conn.execute(
+            "UPDATE users SET is_admin = ? WHERE id = ?",
+            (1 if is_admin else 0, user_id),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
 
 
 # ── 비밀번호 검증 / 토큰 생성 ─────────────────────────────
@@ -112,9 +133,9 @@ def verify_password(plain: str, hashed: str) -> bool:
     return pwd_context.verify(plain, hashed)
 
 
-def create_access_token(user_id: str, username: str) -> str:
+def create_access_token(user_id: str, username: str, is_admin: bool) -> str:
     expire = datetime.now(timezone.utc) + timedelta(days=ACCESS_TOKEN_EXPIRE_DAYS)
-    payload = {"sub": user_id, "username": username, "exp": expire}
+    payload = {"sub": user_id, "username": username, "is_admin": is_admin, "exp": expire}
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
@@ -130,11 +151,21 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> UserInfo:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: str | None = payload.get("sub")
         username: str | None = payload.get("username")
+        is_admin: bool = payload.get("is_admin", False)
         if not user_id or not username:
             raise exc
     except JWTError:
         raise exc
-    return UserInfo(id=user_id, username=username)
+    return UserInfo(id=user_id, username=username, is_admin=is_admin)
+
+
+def get_current_admin(current_user: UserInfo = Depends(get_current_user)) -> UserInfo:
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="관리자 권한이 필요합니다."
+        )
+    return current_user
 
 
 # 모듈 import 시 DB 초기화

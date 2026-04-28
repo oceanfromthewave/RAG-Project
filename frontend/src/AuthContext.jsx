@@ -23,9 +23,9 @@ export function AuthProvider({ children }) {
     else      localStorage.removeItem(USER_KEY);
   }, [user]);
 
-  const login = useCallback((accessToken, username) => {
+  const login = useCallback((accessToken, username, isAdmin) => {
     setToken(accessToken);
-    setUser({ username });
+    setUser({ username, isAdmin });
   }, []);
 
   const logout = useCallback(() => {

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from hashlib import sha1
 from pathlib import Path
@@ -19,7 +20,8 @@ RERANK_MODEL_NAME = "BAAI/bge-reranker-v2-m3"
 CHAT_MODEL_NAME = "mistral"
 ALLOWED_SUFFIXES = {
     ".txt", ".pdf", ".docx", ".py", ".js", ".ts", ".jsx", ".tsx",
-    ".html", ".css", ".json", ".md", ".java", ".c", ".cpp", ".h", ".go"
+    ".html", ".css", ".json", ".md", ".java", ".c", ".cpp", ".h", ".go",
+    ".yaml", ".yml", ".sql", ".sh", ".bash", ".png", ".jpg", ".jpeg"
 }
 
 
@@ -69,7 +71,10 @@ def read_txt(path: Path) -> str:
     try:
         return path.read_text(encoding="utf-8")
     except UnicodeDecodeError:
-        return path.read_text(encoding="latin-1")
+        try:
+            return path.read_text(encoding="cp949")
+        except UnicodeDecodeError:
+            return path.read_text(encoding="latin-1")
 
 
 def read_pdf(path: Path) -> str:
@@ -82,6 +87,26 @@ def read_docx(path: Path) -> str:
     return "\n".join(paragraph.text for paragraph in doc.paragraphs if paragraph.text.strip())
 
 
+def read_image(path: Path) -> str:
+    """Ollama의 llava 모델을 사용하여 이미지에서 텍스트를 추출하거나 내용을 설명한다."""
+    try:
+        import ollama
+        with open(path, "rb") as f:
+            image_bytes = f.read()
+        
+        # llava 모델을 사용하여 이미지 분석
+        response = ollama.generate(
+            model="llava",
+            prompt="이 이미지에 포함된 모든 텍스트를 추출해서 알려줘. 텍스트가 없다면 이미지의 내용을 상세히 설명해줘. 한국어로 답변해줘.",
+            images=[image_bytes],
+            stream=False
+        )
+        return response.get("response", "").strip()
+    except Exception as e:
+        print(f"Image processing error: {e}")
+        return f"[이미지 분석 실패: {path.name}]"
+
+
 def read_document(path: Path) -> str:
     suffix = path.suffix.lower()
 
@@ -91,23 +116,63 @@ def read_document(path: Path) -> str:
     if suffix == ".docx":
         return read_docx(path)
 
+    if suffix in {".png", ".jpg", ".jpeg"}:
+        return read_image(path)
+
     if suffix in ALLOWED_SUFFIXES:
         return read_txt(path)
 
     raise ValueError(f"지원하지 않는 파일 형식입니다: {suffix}")
 
 
-def chunk_text(text: str, size: int = 500, overlap: int = 100) -> list[str]:
+def chunk_text(text: str, size: int = 600, overlap: int = 120) -> list[str]:
+    """텍스트를 의미 있는 단위(단락, 문장)로 최대한 보존하며 분할한다."""
+    if not text.strip():
+        return []
+
+    # 1. 단락 단위로 먼저 분할
+    paragraphs = re.split(r'\n\s*\n', text)
+    
     chunks = []
-    start = 0
+    current_chunk = ""
 
-    while start < len(text):
-        chunk = text[start:start + size].strip()
-        if len(chunk) >= 30:
-            chunks.append(chunk)
-        start += size - overlap
+    for p in paragraphs:
+        p = p.strip()
+        if not p: continue
 
-    return chunks
+        # 단락이 너무 크면 문장 단위로 쪼개기
+        if len(p) > size:
+            # 문장 분리 시도 (단순 정규식)
+            sentences = re.split(r'(?<=[.!?])\s+', p)
+            for s in sentences:
+                if len(current_chunk) + len(s) > size:
+                    if current_chunk:
+                        chunks.append(current_chunk.strip())
+                    
+                    # 겹침(overlap) 처리
+                    if len(current_chunk) > overlap:
+                        current_chunk = current_chunk[-overlap:] + " " + s
+                    else:
+                        current_chunk = s
+                else:
+                    current_chunk = (current_chunk + " " + s).strip()
+        else:
+            if len(current_chunk) + len(p) > size:
+                if current_chunk:
+                    chunks.append(current_chunk.strip())
+                
+                if len(current_chunk) > overlap:
+                    current_chunk = current_chunk[-overlap:] + " " + p
+                else:
+                    current_chunk = p
+            else:
+                current_chunk = (current_chunk + "\n\n" + p).strip()
+
+    if current_chunk:
+        chunks.append(current_chunk.strip())
+
+    # 너무 짧은 청크 필터링 (의미 없는 조각 제거)
+    return [c for c in chunks if len(c) >= 40]
 
 
 def build_chunk_id(source: str, chunk_index: int, chunk: str) -> str:
