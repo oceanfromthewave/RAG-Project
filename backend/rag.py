@@ -184,7 +184,9 @@ def retrieve_context(
     candidates = {}
     # 1. 벡터 검색 (Original & Rewritten)
     search_queries = [query]
-    if len(query) > 10:
+    
+    # 질문이 충분히 길고, 파일이 선택되지 않았을 때만 쿼리 재작성 수행 (오버헤드 방지)
+    if not selected_sources and len(query) > 25 and not is_greeting(query):
         search_queries.append(rewrite_query(query, model=model, history=history))
 
     for current_query in search_queries:

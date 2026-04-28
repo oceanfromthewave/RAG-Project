@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useAuth } from "./AuthContext";
+import { API_BASE_URL } from "./constants";
 
-const API_BASE = "http://127.0.0.1:8000";
+const API_BASE = API_BASE_URL;
 
 export default function LoginPage() {
   const { login } = useAuth();

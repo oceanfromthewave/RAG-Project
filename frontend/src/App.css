@@ -63,11 +63,6 @@
   color: rgba(255, 255, 255, 0.7);
 }
 
-.dark .btn-dark-toggle {
-  color: var(--accent);
-  background: var(--surface-raised);
-}
-
 /* ─── Top Bar ────────────────────────────────────────────── */
 .top-bar {
   display: flex;
@@ -91,7 +86,7 @@
   justify-content: center;
   border-radius: var(--r-pill);
   color: var(--text-muted);
-  background: var(--surface-inset);
+  background: var(--surface-raised);
   border: 1px solid var(--line-strong);
   transition: all var(--tr-base);
   flex-shrink: 0;
@@ -99,7 +94,7 @@
 
 .btn-dark-toggle:hover {
   background: var(--surface-raised);
-  color: var(--accent);
+  /* color: var(--accent); */
   transform: translateY(-1px);
 }
 
@@ -195,7 +190,7 @@
   gap: 7px;
   padding: 7px 13px;
   border-radius: var(--r-pill);
-  background: var(--surface-inset);
+  background: var(--surface-raised);
   border: 1px solid var(--line);
   font-size: 0.8rem;
   color: var(--text-muted);
@@ -374,13 +369,14 @@
 }
 
 /* ─── Sidebars ───────────────────────────────────────────── */
-.history-sidebar, .side-panel {
+.history-sidebar, .side-panel, .doc-sidebar {
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
   overflow: hidden; /* 내부 섹션에서 스크롤 제어 */
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-sizing: border-box;
 }
 
 .history-sidebar {
@@ -389,10 +385,11 @@
   border-radius: var(--r-xl);
   box-shadow: var(--shadow-sm);
 }
-.history-list, .file-list {
+.history-list, .file-list, .doc-sidebar-body {
   flex: 1;
   overflow-y: auto;
   min-height: 0;
+  box-sizing: border-box;
 }
 
 /* ─── Chat Panel ─────────────────────────────────────────── */
@@ -406,6 +403,7 @@
   height: 100%;
   min-height: 0;
   overflow: hidden;
+  box-sizing: border-box;
 }
 
 .chat-feed {
@@ -416,6 +414,35 @@
   flex-direction: column;
   gap: 12px;
   min-height: 0;
+  position: relative;
+}
+
+.btn-scroll-bottom {
+  position: sticky;
+  bottom: 10px;
+  left: 100%;
+  transform: translateX(-10px);
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--surface-raised);
+  border: 1px solid var(--line-strong);
+  color: var(--accent);
+  box-shadow: var(--shadow-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 100;
+  transition: all var(--tr-base);
+  opacity: 0.9;
+}
+
+.btn-scroll-bottom:hover {
+  background: var(--accent);
+  color: white;
+  opacity: 1;
+  transform: translateX(-10px) translateY(-2px);
 }
 
 .quick-prompts {
@@ -740,7 +767,7 @@
   justify-content: center;
   padding: 6px 12px;
   border-radius: var(--r-sm);
-  background: var(--surface-inset);
+  background: var(--surface-raised);
   color: var(--text-muted);
   border: 1px solid var(--line-strong);
   font-size: 0.75rem;
@@ -892,6 +919,18 @@
   background: var(--line-strong);
   color: var(--accent);
   border-color: var(--accent-light);
+}
+
+.message-card.user .msg-action-btn {
+  color: rgba(255, 255, 255, 0.6);
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.message-card.user .msg-action-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.4);
 }
 
 .msg-action-btn.active {
@@ -1323,6 +1362,28 @@
   cursor: not-allowed;
   transform: none;
   box-shadow: none;
+}
+
+.btn-stop {
+  padding: 9px 18px;
+  border-radius: var(--r-pill);
+  background: var(--surface-inset);
+  color: var(--danger);
+  border: 1.5px solid var(--danger);
+  font-weight: 600;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--tr-base);
+  cursor: pointer;
+}
+
+.btn-stop:hover {
+  background: var(--danger);
+  color: white;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.2);
 }
 
 
@@ -2003,6 +2064,7 @@
     z-index: 1001;
     transform: translateX(0);
     transition: transform 0.3s ease;
+    border-radius: var(--r-xl) 0 0 var(--r-xl);
   }
 
   .workspace:not(.show-doc) .doc-sidebar {
@@ -2029,6 +2091,14 @@
   
   .side-panel { display: none; }
   .top-stats { display: none; }
+}
+
+@media (max-width: 480px) {
+  .doc-sidebar {
+    width: 100%;
+    max-width: none;
+    border-radius: 0;
+  }
 }
 
 @media (max-width: 600px) {
@@ -2072,6 +2142,20 @@
   white-space: nowrap;
   display: flex;
   align-items: center;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: var(--r-sm);
+  transition: all var(--tr-fast);
+}
+
+.top-username:hover {
+  background: var(--surface-raised);
+  /* color: var(--accent); */
+}
+
+.top-username.active {
+  background: var(--accent-lighter);
+  /* color: var(--accent); */
 }
 
 .btn-logout {

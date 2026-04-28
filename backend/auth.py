@@ -18,13 +18,10 @@ USERS_DB_PATH = DB_DIR / "users.db"
 import secrets
 
 # 운영 환경에서는 반드시 환경 변수(JWT_SECRET_KEY)를 설정하세요.
-# 설정되지 않은 경우, 매 서버 재시작마다 새로운 랜덤 키가 생성되어 
-# 기존에 발급된 모든 토큰이 무효화됩니다. (보안성 강화)
 _DEFAULT_SECRET = secrets.token_urlsafe(32)
 SECRET_KEY = os.environ.get("JWT_SECRET_KEY", _DEFAULT_SECRET)
 
 if SECRET_KEY == _DEFAULT_SECRET and os.environ.get("NODE_ENV") == "production":
-    # 운영 환경인데 비밀키가 설정되지 않은 경우 경고 (또는 에러 발생 가능)
     print("WARNING: JWT_SECRET_KEY is not set in production. Using a random volatile key.")
 
 ALGORITHM = "HS256"
@@ -68,13 +65,10 @@ def init_users_db():
                 created_at      TEXT NOT NULL
             )
         """)
-        
-        # 기존 DB 마이그레이션: is_admin 컬럼이 없으면 추가
         cursor = conn.cursor()
         existing_cols = {row[1] for row in cursor.execute("PRAGMA table_info(users)")}
         if "is_admin" not in existing_cols:
             cursor.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
-            
         conn.commit()
 
 
@@ -85,6 +79,19 @@ def get_user_by_username(username: str) -> dict | None:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             "SELECT * FROM users WHERE username = ?", (username,)
+        ).fetchone()
+        if row:
+            d = dict(row)
+            d["is_admin"] = bool(d["is_admin"])
+            return d
+        return None
+
+
+def get_user_by_id(user_id: str) -> dict | None:
+    with sqlite3.connect(USERS_DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT * FROM users WHERE id = ?", (user_id,)
         ).fetchone()
         if row:
             d = dict(row)
@@ -117,7 +124,6 @@ def create_user(username: str, password: str) -> dict:
 
 
 def update_user_role(user_id: str, is_admin: bool) -> bool:
-    """사용자의 관리자 권한 여부를 업데이트합니다. 성공 시 True, 사용자 미존재 시 False 반환."""
     with sqlite3.connect(USERS_DB_PATH) as conn:
         cursor = conn.execute(
             "UPDATE users SET is_admin = ? WHERE id = ?",
@@ -125,6 +131,31 @@ def update_user_role(user_id: str, is_admin: bool) -> bool:
         )
         conn.commit()
         return cursor.rowcount > 0
+
+
+def change_password(user_id: str, old_password: str, new_password: str) -> None:
+    """현재 비밀번호를 검증한 뒤 새 비밀번호로 변경합니다."""
+    if len(new_password) < 8:
+        raise ValueError("새 비밀번호는 8자 이상이어야 합니다.")
+    if old_password == new_password:
+        raise ValueError("새 비밀번호가 현재 비밀번호와 동일합니다.")
+
+    with sqlite3.connect(USERS_DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT hashed_password FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+        if not row:
+            raise ValueError("사용자를 찾을 수 없습니다.")
+        if not pwd_context.verify(old_password, row["hashed_password"]):
+            raise ValueError("현재 비밀번호가 올바르지 않습니다.")
+
+        new_hashed = pwd_context.hash(new_password)
+        conn.execute(
+            "UPDATE users SET hashed_password = ? WHERE id = ?",
+            (new_hashed, user_id),
+        )
+        conn.commit()
 
 
 # ── 비밀번호 검증 / 토큰 생성 ─────────────────────────────

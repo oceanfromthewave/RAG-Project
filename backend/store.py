@@ -13,16 +13,18 @@ from sentence_transformers import CrossEncoder, SentenceTransformer
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data" / "docs"
 DB_DIR = BASE_DIR / "db"
-COLLECTION_NAME = "docs"
-
-EMBED_MODEL_NAME = "BAAI/bge-m3"
-RERANK_MODEL_NAME = "BAAI/bge-reranker-v2-m3"
+EMBED_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+RERANK_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 CHAT_MODEL_NAME = "mistral"
 ALLOWED_SUFFIXES = {
     ".txt", ".pdf", ".docx", ".py", ".js", ".ts", ".jsx", ".tsx",
     ".html", ".css", ".json", ".md", ".java", ".c", ".cpp", ".h", ".go",
     ".yaml", ".yml", ".sql", ".sh", ".bash", ".png", ".jpg", ".jpeg"
 }
+
+# 모델 이름에 따라 컬렉션 이름을 다르게 가져가서 차원 충돌 방지
+_model_slug = EMBED_MODEL_NAME.split("/")[-1].replace("-", "_")
+COLLECTION_NAME = f"docs_{_model_slug}"
 
 
 def ensure_storage_dirs():
