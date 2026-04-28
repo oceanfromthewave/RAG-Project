@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { FileSkeleton } from "./ChatComponents";
 
 const getExtension = (name) => name.split(".").pop()?.toUpperCase() || "DOC";
 
@@ -15,6 +16,7 @@ export default function SidePanel({
   dragActive,
   setDragActive,
   uploading,
+  filesLoading,
   fileInputRef,
   handleDrop,
   handleUpload,
@@ -102,7 +104,9 @@ export default function SidePanel({
             )}
           </div>
           <div className="file-list" role="list" aria-label="인덱싱된 문서 목록">
-            {filteredFiles.length === 0 ? (
+            {filesLoading ? (
+              <FileSkeleton />
+            ) : filteredFiles.length === 0 ? (
               <div className="empty-state">
                 <span className="empty-icon" aria-hidden="true">{files.length === 0 ? "◎" : "⊘"}</span>
                 {files.length === 0 ? (

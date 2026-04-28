@@ -47,6 +47,9 @@ from backend.history import (
     get_session_owner,
     get_sessions,
     update_session_title,
+    create_workspace,
+    get_workspaces,
+    delete_workspace,
 )
 from backend.rag import (
     NO_CONTEXT_ANSWER,
@@ -90,6 +93,8 @@ async def add_security_headers(request: Request, call_next):
     response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none';"
     return response
 
+from fastapi.responses import JSONResponse
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -97,6 +102,28 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["*"],
 )
+
+
+# ── 전역 예외 핸들러 ─────────────────────────────────────
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    # HTTPException (404, 401 등)은 원래 의도된 에러이므로 그대로 반환
+    if isinstance(exc, HTTPException):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail},
+        )
+    
+    # 그 외의 예기치 못한 런타임 오류(500)는 로깅 후 정제된 메시지 반환
+    logger.error(f"UNHANDLED ERROR: {request.method} {request.url}")
+    logger.error(f"Exception Type: {type(exc).__name__}")
+    logger.error(f"Exception Detail: {str(exc)}", exc_info=True)
+    
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "예기치 못한 서버 오류가 발생했습니다. 관리자에게 문의해 주세요."},
+    )
 
 
 # ── Pydantic 모델 ──────────────────────────────────────────
@@ -111,11 +138,16 @@ class Question(BaseModel):
     model: str | None = None
     history: list[Message] | None = None
     session_id: str | None = None
+    workspace_id: str | None = None
     selected_files: list[str] = []
 
 
 class SessionUpdate(BaseModel):
     title: str
+
+
+class WorkspaceCreate(BaseModel):
+    name: str
 
 
 class RoleUpdate(BaseModel):
@@ -132,6 +164,25 @@ class PasswordChange(BaseModel):
 
 
 ensure_storage_dirs()
+
+
+# ── 워크스페이스 엔드포인트 ──────────────────────────────────
+
+@app.get("/workspaces")
+def list_workspaces(current_user: UserInfo = Depends(get_current_user)):
+    return {"workspaces": get_workspaces(user_id=current_user.id)}
+
+
+@app.post("/workspaces", status_code=201)
+def add_workspace(body: WorkspaceCreate, current_user: UserInfo = Depends(get_current_user)):
+    wid = create_workspace(body.name, current_user.id)
+    return {"id": wid, "name": body.name}
+
+
+@app.delete("/workspaces/{workspace_id}")
+def remove_workspace(workspace_id: str, current_user: UserInfo = Depends(get_current_user)):
+    delete_workspace(workspace_id, current_user.id)
+    return {"message": "Workspace deleted"}
 
 
 # ── 유틸리티 ───────────────────────────────────────────────
@@ -382,8 +433,11 @@ def get_activity_logs(
 # ── 세션 엔드포인트 ────────────────────────────────────────
 
 @app.get("/sessions")
-def list_chat_sessions(current_user: UserInfo = Depends(get_current_user)):
-    return {"sessions": get_sessions(user_id=current_user.id)}
+def list_chat_sessions(
+    workspace_id: str | None = Query(None),
+    current_user: UserInfo = Depends(get_current_user)
+):
+    return {"sessions": get_sessions(user_id=current_user.id, workspace_id=workspace_id)}
 
 
 @app.get("/sessions/{session_id}")
@@ -438,7 +492,12 @@ def ask(question: Question, current_user: UserInfo = Depends(get_current_user)):
     current_session_id = question.session_id
     if not current_session_id:
         title = (question.query[:30] + "...") if len(question.query) > 30 else question.query
-        current_session_id = create_session(title=title, model=question.model, user_id=current_user.id)
+        current_session_id = create_session(
+            title=title, 
+            model=question.model, 
+            user_id=current_user.id,
+            workspace_id=question.workspace_id
+        )
     else:
         owner = get_session_owner(current_session_id)
         if owner and owner != current_user.id:
@@ -478,7 +537,12 @@ def ask_stream(question: Question, current_user: UserInfo = Depends(get_current_
 
     if not current_session_id:
         temp_title = (question.query[:30] + "...") if len(question.query) > 30 else question.query
-        current_session_id = create_session(title=temp_title, model=question.model, user_id=current_user.id)
+        current_session_id = create_session(
+            title=temp_title, 
+            model=question.model, 
+            user_id=current_user.id,
+            workspace_id=question.workspace_id
+        )
         is_new_session = True
     else:
         owner = get_session_owner(current_session_id)

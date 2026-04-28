@@ -107,7 +107,7 @@ export default function MessageCard({ message, isStreaming, onFeedback, onRegene
                 <p className="source-preview">{src.preview}</p>
                 <button 
                   className="btn-view-full" 
-                  onClick={(e) => { e.stopPropagation(); onViewDoc(src.source, src.full_text || src.preview); }}
+                  onClick={(e) => { e.stopPropagation(); onViewDoc(src.source, src.full_text || src.preview, src.chunk_index); }}
                 >전체보기</button>
               </div>
             ))}

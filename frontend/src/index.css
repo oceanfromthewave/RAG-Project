@@ -28,13 +28,13 @@
 
   /* ── 강조색 ── */
   --accent:         #3186C0;
-  --accent-hover:   #0d6aa8;
-  --accent-glow:    rgba(87, 151, 255, 0.16);
-  --accent-light:   rgba(27, 68, 254, 0.1);
-  --accent-lighter: rgba(42, 56, 255, 0.04);
-  --accent-focus:   rgba(50, 73, 247, 0.35);
-  --accent-focus-bg: rgba(255, 110, 60, 0.07);
-  --accent-cool:    #6e9bff;
+  --accent-hover:   #256ea3;
+  --accent-glow:    rgba(49, 134, 192, 0.16);
+  --accent-light:   rgba(49, 134, 192, 0.1);
+  --accent-lighter: rgba(49, 134, 192, 0.04);
+  --accent-focus:   rgba(49, 134, 192, 0.35);
+  --accent-focus-bg: rgba(49, 134, 192, 0.07);
+  --accent-cool:    #3186C0;
 
   /* ── 시멘틱 ── */
   --danger:         #c44530;

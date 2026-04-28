@@ -16,11 +16,12 @@ export default function Workspace({ rag, user }) {
     chatEndRef, isAtBottom, scrollToBottom, quickPromptsRef, sendMessage,
     composerDragActive, setComposerDragActive, attachedFiles, setAttachedFiles,
     addToast, textareaRef, input, setInput, statusMessage, stopGeneration,
-    handleExportChat, handleScroll, dragActive, setDragActive, uploading,
+    handleExportChat, handleScroll, dragActive, setDragActive, uploading, filesLoading, historyLoading,
     fileInputRef, handleDrop, handleUpload, fileFilter, setFileFilter,
     selectedFiles, deleteSelectedFiles, files, toggleFileSelection, deleteFile,
     dropdownRef, isModelDropdownOpen, setIsModelDropdownOpen, selectedModel,
-    setSelectedModel, availableModels, updateFileTags
+    setSelectedModel, availableModels, updateFileTags,
+    workspaces, currentWorkspaceId, setCurrentWorkspaceId, handleCreateWorkspace, handleDeleteWorkspace
   } = rag;
 
   if (view === "admin") {
@@ -48,6 +49,11 @@ export default function Workspace({ rag, user }) {
   return (
     <main className={`workspace ${!sidebarOpen ? "collapsed" : ""} ${docSidebar.isOpen ? "show-doc" : ""}`}>
       <HistorySidebar
+        workspaces={workspaces}
+        currentWorkspaceId={currentWorkspaceId}
+        setCurrentWorkspaceId={setCurrentWorkspaceId}
+        handleCreateWorkspace={handleCreateWorkspace}
+        handleDeleteWorkspace={handleDeleteWorkspace}
         sessions={sessions}
         sessionFilter={sessionFilter}
         setSessionFilter={setSessionFilter}
@@ -67,6 +73,7 @@ export default function Workspace({ rag, user }) {
       <ChatPanel
         messages={messages}
         chatLoading={chatLoading}
+        historyLoading={historyLoading}
         handleFeedback={handleFeedback}
         handleRegenerate={handleRegenerate}
         setDocSidebar={setDocSidebar}
@@ -96,6 +103,7 @@ export default function Workspace({ rag, user }) {
         dragActive={dragActive}
         setDragActive={setDragActive}
         uploading={uploading}
+        filesLoading={filesLoading}
         fileInputRef={fileInputRef}
         handleDrop={handleDrop}
         handleUpload={handleUpload}
@@ -123,6 +131,7 @@ export default function Workspace({ rag, user }) {
         isOpen={docSidebar.isOpen}
         title={docSidebar.title}
         content={docSidebar.content}
+        highlightChunkIndex={docSidebar.highlightChunkIndex}
         onClose={() => setDocSidebar({ ...docSidebar, isOpen: false })}
       />
     </main>

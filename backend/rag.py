@@ -254,12 +254,16 @@ def retrieve_context(
 def select_sources(hits: list[dict], limit: int = 4) -> list[dict]:
     selected, seen = [], set()
     for hit in hits:
+        # 동일 파일의 다른 청크가 검색될 수 있으므로 (파일, 청크) 조합이나 파일 단위로 선택
+        # 여기서는 시각적 중복을 피하기 위해 파일 단위로 보여주되, 
+        # 하이라이트를 위해 검색된 가장 관련성 높은 청크 인덱스를 저장합니다.
         if hit["source"] in seen: continue
         selected.append({
             "source": hit["source"], 
             "score": round(hit["score"], 4), 
             "preview": hit["document"][:250].strip() + "...",
-            "full_text": hit["document"]
+            "full_text": hit["document"],
+            "chunk_index": hit["chunk_index"] # 하이라이트를 위해 추가
         })
         seen.add(hit["source"])
         if len(selected) == limit: break

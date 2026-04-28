@@ -25,6 +25,8 @@ export function useRag(authFetch, user, logout) {
   const [statusMessage, setStatusMessage]       = useState(TEXT.ready);
   
   // Data States
+  const [workspaces, setWorkspaces]     = useState([]);
+  const [currentWorkspaceId, setCurrentWorkspaceId] = useState(null);
   const [files, setFiles]               = useState([]);
   const [stats, setStats]               = useState(INITIAL_STATS);
   const [sessions, setSessions]         = useState([]);
@@ -33,6 +35,8 @@ export function useRag(authFetch, user, logout) {
   
   // Interaction States
   const [uploading, setUploading]       = useState(false);
+  const [filesLoading, setFilesLoading] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [dragActive, setDragActive]     = useState(false);
   const [composerDragActive, setComposerDragActive] = useState(false);
   const [fileFilter, setFileFilter]     = useState("");
@@ -40,8 +44,8 @@ export function useRag(authFetch, user, logout) {
   const [sessionFilter, setSessionFilter] = useState("");
   const [toasts, setToasts]             = useState([]);
   const [confirmData, setConfirmData]   = useState({ isOpen: false, title: "", message: "", onConfirm: null });
-  const [viewingDoc, setViewingDoc]     = useState({ isOpen: false, title: "", content: "" });
-  const [docSidebar, setDocSidebar]     = useState({ isOpen: false, title: "", content: "" });
+  const [viewingDoc, setViewingDoc]     = useState({ isOpen: false, title: "", content: "", highlightChunkIndex: null });
+  const [docSidebar, setDocSidebar]     = useState({ isOpen: false, title: "", content: "", highlightChunkIndex: null });
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
   const [editingSessionId, setEditingSessionId] = useState(null);
   const [editingTitle, setEditingTitle]         = useState("");
@@ -119,12 +123,17 @@ export function useRag(authFetch, user, logout) {
   };
 
   const fetchSidebarData = async () => {
-    const [filesRes, statsRes] = await Promise.all([
-      authFetch(`${API_BASE_URL}/files-db`),
-      authFetch(`${API_BASE_URL}/stats`),
-    ]);
-    const [filesData, statsData] = await Promise.all([readJson(filesRes), readJson(statsRes)]);
-    return { files: filesData.files || [], stats: statsData };
+    setFilesLoading(true);
+    try {
+      const [filesRes, statsRes] = await Promise.all([
+        authFetch(`${API_BASE_URL}/files-db`),
+        authFetch(`${API_BASE_URL}/stats`),
+      ]);
+      const [filesData, statsData] = await Promise.all([readJson(filesRes), readJson(statsRes)]);
+      return { files: filesData.files || [], stats: statsData };
+    } finally {
+      setFilesLoading(false);
+    }
   };
 
   const refreshSidebar = async () => {
@@ -132,9 +141,17 @@ export function useRag(authFetch, user, logout) {
       const data = await fetchSidebarData();
       setFiles(data.files);
       setStats(data.stats);
-      const sessionsRes = await authFetch(`${API_BASE_URL}/sessions`);
+      
+      const sessionUrl = currentWorkspaceId 
+        ? `${API_BASE_URL}/sessions?workspace_id=${currentWorkspaceId}` 
+        : `${API_BASE_URL}/sessions`;
+      const sessionsRes = await authFetch(sessionUrl);
       const sessionsData = await readJson(sessionsRes);
       setSessions(sessionsData.sessions || []);
+
+      const wsRes = await authFetch(`${API_BASE_URL}/workspaces`);
+      const wsData = await readJson(wsRes);
+      setWorkspaces(wsData.workspaces || []);
     } catch (err) {
       addToast(err.message, "error");
     }
@@ -153,6 +170,10 @@ export function useRag(authFetch, user, logout) {
         const modelsData = await readJson(modelsRes);
         setAvailableModels(modelsData.models || []);
 
+        const wsRes = await authFetch(`${API_BASE_URL}/workspaces`);
+        const wsData = await readJson(wsRes);
+        setWorkspaces(wsData.workspaces || []);
+
         const sessionsRes = await authFetch(`${API_BASE_URL}/sessions`);
         const sessionsData = await readJson(sessionsRes);
         setSessions(sessionsData.sessions || []);
@@ -161,6 +182,42 @@ export function useRag(authFetch, user, logout) {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    if (user) refreshSidebar();
+  }, [currentWorkspaceId]);
+
+  /* ── Workspace Logic ── */
+  const handleCreateWorkspace = async (name) => {
+    if (!name) return;
+    try {
+      const res = await authFetch(`${API_BASE_URL}/workspaces`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name })
+      });
+      const data = await readJson(res);
+      setWorkspaces(prev => [data, ...prev]);
+      setCurrentWorkspaceId(data.id);
+      addToast(`워크스페이스 '${name}'이(가) 생성되었습니다.`, "success");
+    } catch (err) { addToast(err.message, "error"); }
+  };
+
+  const handleDeleteWorkspace = async (id) => {
+    const ws = workspaces.find(w => w.id === id);
+    setConfirmData({
+      isOpen: true, title: "워크스페이스 삭제", message: `'${ws?.name}' 워크스페이스와 그 안의 모든 대화가 삭제됩니다. 계속하시겠습니까?`,
+      onConfirm: async () => {
+        setConfirmData(prev => ({ ...prev, isOpen: false }));
+        try {
+          await authFetch(`${API_BASE_URL}/workspaces/${id}`, { method: "DELETE" });
+          setWorkspaces(prev => prev.filter(w => w.id !== id));
+          if (currentWorkspaceId === id) setCurrentWorkspaceId(null);
+          addToast("워크스페이스가 삭제되었습니다.", "success");
+        } catch (err) { addToast(err.message, "error"); }
+      }
+    });
+  };
 
   /* ── Chat Logic ── */
   const resetChat = () => {
@@ -189,6 +246,7 @@ export function useRag(authFetch, user, logout) {
 
   const loadSession = async (sessionId) => {
     if (sessionId === currentSessionId) return;
+    setHistoryLoading(true);
     const isRunning = activeStreamsRef.current.has(sessionId);
     setChatLoading(isRunning);
     setStatusMessage(isRunning ? TEXT.thinking : TEXT.ready);
@@ -220,6 +278,8 @@ export function useRag(authFetch, user, logout) {
       setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "auto" }), 50);
     } catch (err) {
       addToast(err.message, "error");
+    } finally {
+      setHistoryLoading(false);
     }
   };
 
@@ -274,7 +334,14 @@ export function useRag(authFetch, user, logout) {
     try {
       const response = await authFetch(`${API_BASE_URL}/ask-stream`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query, model: selectedModel, history, session_id: currentSessionId, selected_files: currentAttachments }),
+        body: JSON.stringify({ 
+          query, 
+          model: selectedModel, 
+          history, 
+          session_id: currentSessionId, 
+          workspace_id: currentWorkspaceId,
+          selected_files: currentAttachments 
+        }),
         signal: controller.signal,
       });
       if (!response.ok || !response.body) {
@@ -486,7 +553,8 @@ export function useRag(authFetch, user, logout) {
     // States
     view, setView, darkMode, setDarkMode, sidebarOpen, setSidebarOpen, messages, input, setInput, chatLoading,
     sessions, currentSessionId, stats, files, availableModels, selectedModel, setSelectedModel,
-    statusMessage, uploading, dragActive, setDragActive, composerDragActive, setComposerDragActive,
+    workspaces, currentWorkspaceId, setCurrentWorkspaceId,
+    statusMessage, uploading, filesLoading, historyLoading, dragActive, setDragActive, composerDragActive, setComposerDragActive,
     fileFilter, setFileFilter, selectedFiles, sessionFilter, setSessionFilter, toasts, confirmData, setConfirmData,
     viewingDoc, setViewingDoc, docSidebar, setDocSidebar, isModelDropdownOpen, setIsModelDropdownOpen,
     editingSessionId, editingTitle, setEditingTitle, isAtBottom, attachedFiles, setAttachedFiles,
@@ -498,6 +566,6 @@ export function useRag(authFetch, user, logout) {
     addToast, dismissToast, loadSession, deleteChatSession, startEditSession, submitEditSession, handleEditKeyDown,
     handleFeedback, handleExportChat, handleRegenerate, sendMessage, stopGeneration, handleResetChat, resetChat,
     handleUpload, handleDrop, deleteFile, toggleFileSelection, deleteSelectedFiles, handleLogout, handleScroll, scrollToBottom,
-    refreshSidebar, updateFileTags
+    refreshSidebar, updateFileTags, handleCreateWorkspace, handleDeleteWorkspace
   };
 }

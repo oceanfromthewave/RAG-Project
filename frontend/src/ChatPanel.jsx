@@ -1,8 +1,10 @@
 import MessageCard from "./MessageCard";
+import { ChatSkeleton } from "./ChatComponents";
 
 export default function ChatPanel({
   messages,
   chatLoading,
+  historyLoading,
   handleFeedback,
   handleRegenerate,
   setDocSidebar,
@@ -50,7 +52,9 @@ export default function ChatPanel({
       </div>
 
       <div className="chat-feed" role="log" aria-live="polite" aria-label="채팅 메시지" onScroll={handleScroll}>
-        {messages.map((message, idx) => (
+        {historyLoading ? (
+          <ChatSkeleton />
+        ) : messages.map((message, idx) => (
           <MessageCard
             key={message.id}
             message={message}
@@ -58,7 +62,7 @@ export default function ChatPanel({
             onFeedback={handleFeedback}
             onRegenerate={handleRegenerate}
             onRetry={handleRegenerate}
-            onViewDoc={(title, content) => setDocSidebar({ isOpen: true, title, content })}
+            onViewDoc={(title, content, chunkIndex) => setDocSidebar({ isOpen: true, title, content, highlightChunkIndex: chunkIndex })}
             isLastAssistant={idx === messages.length - 1 && message.role === "assistant"}
             isLastUser={idx === realLastUserIndex}
           />

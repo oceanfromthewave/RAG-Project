@@ -1,3 +1,5 @@
+import { Suspense } from "react";
+import { Toaster } from "react-hot-toast";
 import "./App.css";
 import { useAuth } from "./AuthContext";
 import LoginPage from "./LoginPage";
@@ -19,6 +21,7 @@ function AuthenticatedApp({ authFetch, user, logout }) {
 
   return (
     <div className={`app-shell${rag.darkMode ? " dark" : ""}`}>
+      <Toaster position="top-right" />
       <ToastRegion toasts={rag.toasts} onDismiss={rag.dismissToast} />
 
       <ConfirmModal
@@ -41,6 +44,7 @@ function AuthenticatedApp({ authFetch, user, logout }) {
         isOpen={rag.viewingDoc.isOpen}
         title={rag.viewingDoc.title}
         content={rag.viewingDoc.content}
+        highlightChunkIndex={rag.viewingDoc.highlightChunkIndex}
         onCancel={() => rag.setViewingDoc(prev => ({ ...prev, isOpen: false }))}
       />
 
@@ -58,7 +62,9 @@ function AuthenticatedApp({ authFetch, user, logout }) {
         handleLogout={rag.handleLogout}
       />
 
-      <Workspace rag={rag} user={user} />
+      <Suspense fallback={<div className="loading-overlay">컴포넌트 로드 중...</div>}>
+        <Workspace rag={rag} user={user} />
+      </Suspense>
     </div>
   );
 }

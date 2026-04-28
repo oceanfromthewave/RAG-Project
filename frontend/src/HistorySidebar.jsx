@@ -1,4 +1,11 @@
+import { useState } from "react";
+
 export default function HistorySidebar({
+  workspaces,
+  currentWorkspaceId,
+  setCurrentWorkspaceId,
+  handleCreateWorkspace,
+  handleDeleteWorkspace,
   sessions,
   sessionFilter,
   setSessionFilter,
@@ -14,12 +21,82 @@ export default function HistorySidebar({
   handleResetChat,
   activeStreams
 }) {
+  const [isWsOpen, setIsWsOpen] = useState(false);
+
   const filteredSessions = sessions.filter(s =>
     s.title.toLowerCase().includes(sessionFilter.toLowerCase())
   );
 
+  const currentWorkspace = workspaces.find(ws => ws.id === currentWorkspaceId);
+
   return (
     <nav className="history-sidebar" aria-label="대화 기록">
+      <div className="workspace-selector">
+        <div className="ws-header">
+          <label>워크스페이스</label>
+          <button 
+            className="btn-ws-add" 
+            onClick={() => {
+              const name = prompt("새 워크스페이스 이름을 입력하세요:");
+              if (name) handleCreateWorkspace(name);
+            }}
+            title="새 워크스페이스 추가"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          </button>
+        </div>
+
+        <div className="ws-custom-dropdown">
+          <button 
+            className={`ws-trigger ${isWsOpen ? "active" : ""}`}
+            onClick={() => setIsWsOpen(!isWsOpen)}
+          >
+            <div className="ws-trigger-content">
+              <span className="ws-folder-icon">
+                {currentWorkspaceId ? "📂" : "👤"}
+              </span>
+              <span className="ws-selected-name">
+                {currentWorkspace?.name || "개인 워크스페이스"}
+              </span>
+            </div>
+            <span className={`ws-chevron ${isWsOpen ? "open" : ""}`}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+            </span>
+          </button>
+
+          {isWsOpen && (
+            <>
+              <div className="ws-dropdown-overlay" onClick={() => setIsWsOpen(false)} />
+              <div className="ws-options">
+                <div 
+                  className={`ws-option ${!currentWorkspaceId ? "selected" : ""}`}
+                  onClick={() => { setCurrentWorkspaceId(null); setIsWsOpen(false); }}
+                >
+                  <span className="ws-option-icon">👤</span>
+                  <span className="ws-option-name">개인 워크스페이스</span>
+                </div>
+                
+                {workspaces.map(ws => (
+                  <div 
+                    key={ws.id} 
+                    className={`ws-option ${currentWorkspaceId === ws.id ? "selected" : ""}`}
+                    onClick={() => { setCurrentWorkspaceId(ws.id); setIsWsOpen(false); }}
+                  >
+                    <span className="ws-option-icon">📂</span>
+                    <span className="ws-option-name">{ws.name}</span>
+                    <button 
+                      className="btn-option-del"
+                      onClick={(e) => { e.stopPropagation(); handleDeleteWorkspace(ws.id); }}
+                      title="워크스페이스 삭제"
+                    >✕</button>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
       <div className="history-head">
         <button type="button" className="btn-new-chat" onClick={handleResetChat}>
           <span className="plus-icon">+</span>새 채팅 시작

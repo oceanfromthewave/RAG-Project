@@ -14,15 +14,27 @@ def init_db():
     with sqlite3.connect(HISTORY_DB_PATH) as conn:
         cursor = conn.cursor()
 
-        # Sessions table (user_id 포함)
+        # Workspaces table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS workspaces (
+                id         TEXT PRIMARY KEY,
+                user_id    TEXT NOT NULL,
+                name       TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """)
+
+        # Sessions table (workspace_id 포함)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS sessions (
-                id         TEXT PRIMARY KEY,
-                user_id    TEXT NOT NULL DEFAULT '',
-                title      TEXT NOT NULL,
-                model      TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                id           TEXT PRIMARY KEY,
+                user_id      TEXT NOT NULL DEFAULT '',
+                workspace_id TEXT,
+                title        TEXT NOT NULL,
+                model        TEXT,
+                created_at   TEXT NOT NULL,
+                updated_at   TEXT NOT NULL,
+                FOREIGN KEY (workspace_id) REFERENCES workspaces (id) ON DELETE CASCADE
             )
         """)
 
@@ -42,10 +54,12 @@ def init_db():
             )
         """)
 
-        # 기존 DB 마이그레이션: user_id 컬럼이 없으면 추가
-        existing_cols = {row[1] for row in cursor.execute("PRAGMA table_info(sessions)")}
-        if "user_id" not in existing_cols:
+        # 기존 DB 마이그레이션: 컬럼이 없으면 추가
+        existing_sessions_cols = {row[1] for row in cursor.execute("PRAGMA table_info(sessions)")}
+        if "user_id" not in existing_sessions_cols:
             cursor.execute("ALTER TABLE sessions ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
+        if "workspace_id" not in existing_sessions_cols:
+            cursor.execute("ALTER TABLE sessions ADD COLUMN workspace_id TEXT")
 
         existing_msg_cols = {row[1] for row in cursor.execute("PRAGMA table_info(messages)")}
         if "feedback" not in existing_msg_cols:
@@ -54,28 +68,69 @@ def init_db():
         conn.commit()
 
 
+# ── Workspaces ────────────────────────────────────────────
+
+def create_workspace(name: str, user_id: str) -> str:
+    workspace_id = str(uuid4())
+    now = datetime.now().isoformat()
+    with sqlite3.connect(HISTORY_DB_PATH) as conn:
+        conn.execute(
+            "INSERT INTO workspaces (id, user_id, name, created_at) VALUES (?, ?, ?, ?)",
+            (workspace_id, user_id, name, now),
+        )
+        conn.commit()
+    return workspace_id
+
+
+def get_workspaces(user_id: str) -> list[dict]:
+    with sqlite3.connect(HISTORY_DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM workspaces WHERE user_id = ? ORDER BY created_at DESC",
+            (user_id,),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def delete_workspace(workspace_id: str, user_id: str):
+    with sqlite3.connect(HISTORY_DB_PATH) as conn:
+        conn.execute(
+            "DELETE FROM workspaces WHERE id = ? AND user_id = ?",
+            (workspace_id, user_id),
+        )
+        conn.commit()
+
+
 # ── Sessions ──────────────────────────────────────────────
 
-def create_session(title: str = "New Chat", model: str | None = None, user_id: str = "") -> str:
+def create_session(title: str = "New Chat", model: str | None = None, user_id: str = "", workspace_id: str | None = None) -> str:
     session_id = str(uuid4())
     now = datetime.now().isoformat()
     with sqlite3.connect(HISTORY_DB_PATH) as conn:
         conn.execute(
-            "INSERT INTO sessions (id, user_id, title, model, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (session_id, user_id, title, model, now, now),
+            "INSERT INTO sessions (id, user_id, workspace_id, title, model, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (session_id, user_id, workspace_id, title, model, now, now),
         )
         conn.commit()
     return session_id
 
 
-def get_sessions(user_id: str = "") -> list[dict]:
+def get_sessions(user_id: str = "", workspace_id: str | None = None) -> list[dict]:
     with sqlite3.connect(HISTORY_DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        cursor.execute(
-            "SELECT * FROM sessions WHERE user_id = ? ORDER BY updated_at DESC",
-            (user_id,),
-        )
+        if workspace_id:
+            cursor.execute(
+                "SELECT * FROM sessions WHERE user_id = ? AND workspace_id = ? ORDER BY updated_at DESC",
+                (user_id, workspace_id),
+            )
+        else:
+            # 워크스페이스 미지정 시 (기본 워크스페이스 또는 전체)
+            cursor.execute(
+                "SELECT * FROM sessions WHERE user_id = ? AND workspace_id IS NULL ORDER BY updated_at DESC",
+                (user_id,),
+            )
         return [dict(row) for row in cursor.fetchall()]
 
 
