@@ -9,12 +9,12 @@ from backend.store import DB_DIR
 
 HISTORY_DB_PATH = DB_DIR / "history.db"
 
+
 def init_db():
     DB_DIR.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(HISTORY_DB_PATH) as conn:
         cursor = conn.cursor()
 
-        # Workspaces table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS workspaces (
                 id         TEXT PRIMARY KEY,
@@ -24,7 +24,6 @@ def init_db():
             )
         """)
 
-        # Sessions table (workspace_id 포함)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS sessions (
                 id           TEXT PRIMARY KEY,
@@ -38,7 +37,6 @@ def init_db():
             )
         """)
 
-        # Messages table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS messages (
                 id         TEXT PRIMARY KEY,
@@ -54,7 +52,7 @@ def init_db():
             )
         """)
 
-        # 기존 DB 마이그레이션: 컬럼이 없으면 추가
+        # 기존 DB 마이그레이션
         existing_sessions_cols = {row[1] for row in cursor.execute("PRAGMA table_info(sessions)")}
         if "user_id" not in existing_sessions_cols:
             cursor.execute("ALTER TABLE sessions ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
@@ -117,38 +115,48 @@ def create_session(title: str = "New Chat", model: str | None = None, user_id: s
 
 
 def get_sessions(user_id: str = "", workspace_id: str | None = None) -> list[dict]:
+    """세션 목록 반환 - 메시지 수 포함."""
     with sqlite3.connect(HISTORY_DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         if workspace_id:
             cursor.execute(
-                "SELECT * FROM sessions WHERE user_id = ? AND workspace_id = ? ORDER BY updated_at DESC",
+                """
+                SELECT s.*, COUNT(m.id) AS message_count
+                FROM sessions s
+                LEFT JOIN messages m ON m.session_id = s.id
+                WHERE s.user_id = ? AND s.workspace_id = ?
+                GROUP BY s.id
+                ORDER BY s.updated_at DESC
+                """,
                 (user_id, workspace_id),
             )
         else:
-            # 워크스페이스 미지정 시 (기본 워크스페이스 또는 전체)
             cursor.execute(
-                "SELECT * FROM sessions WHERE user_id = ? AND workspace_id IS NULL ORDER BY updated_at DESC",
+                """
+                SELECT s.*, COUNT(m.id) AS message_count
+                FROM sessions s
+                LEFT JOIN messages m ON m.session_id = s.id
+                WHERE s.user_id = ? AND s.workspace_id IS NULL
+                GROUP BY s.id
+                ORDER BY s.updated_at DESC
+                """,
                 (user_id,),
             )
         return [dict(row) for row in cursor.fetchall()]
 
 
 def get_session_messages(session_id: str, user_id: str = "") -> list[dict]:
-    """user_id 검증 후 메시지 반환 (타인의 세션 접근 차단)."""
     with sqlite3.connect(HISTORY_DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-
-        # 세션 소유자 확인
         session = cursor.execute(
             "SELECT user_id FROM sessions WHERE id = ?", (session_id,)
         ).fetchone()
         if session is None:
             return []
         if user_id and session["user_id"] and session["user_id"] != user_id:
-            return None  # 권한 없음을 None 으로 구분
-
+            return None
         cursor.execute(
             "SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC",
             (session_id,),
@@ -178,8 +186,8 @@ def add_message(
     context: str | None = None,
     score: float | None = None,
 ):
-    message_id = str(uuid4())
-    now = datetime.now().isoformat()
+    message_id  = str(uuid4())
+    now         = datetime.now().isoformat()
     sources_json = json.dumps(sources) if sources else None
 
     with sqlite3.connect(HISTORY_DB_PATH) as conn:
@@ -221,17 +229,15 @@ def update_session_title(session_id: str, title: str, user_id: str = ""):
 
 
 def update_message_feedback(message_id: str, feedback: int, user_id: str = ""):
-    """메시지 피드백 업데이트 (1: 좋음, -1: 싫음, 0: 취소)."""
     with sqlite3.connect(HISTORY_DB_PATH) as conn:
         if user_id:
             cursor = conn.execute("""
-                UPDATE messages 
-                SET feedback = ? 
+                UPDATE messages
+                SET feedback = ?
                 WHERE id = ? AND session_id IN (SELECT id FROM sessions WHERE user_id = ?)
             """, (feedback, message_id, user_id))
         else:
             cursor = conn.execute("UPDATE messages SET feedback = ? WHERE id = ?", (feedback, message_id))
-        
         conn.commit()
         return cursor.rowcount > 0
 

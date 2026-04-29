@@ -24,7 +24,7 @@ ALLOWED_SUFFIXES = {
 
 # 모델 이름에 따라 컬렉션 이름을 다르게 가져가서 차원 충돌 방지
 _model_slug = EMBED_MODEL_NAME.split("/")[-1].replace("-", "_")
-COLLECTION_NAME = f"docs_{_model_slug}"
+COLLECTION_NAME = f"docs_{_model_slug}_v1"
 
 
 def ensure_storage_dirs():
@@ -38,9 +38,29 @@ def get_client():
     return chromadb.PersistentClient(path=str(DB_DIR))
 
 
+def reset_collection(client):
+    try:
+        client.delete_collection(COLLECTION_NAME)
+    except Exception:
+        pass
+
+
 @lru_cache(maxsize=1)
 def get_collection():
-    return get_client().get_or_create_collection(COLLECTION_NAME)
+    client = get_client()
+    try:
+        return client.get_or_create_collection(COLLECTION_NAME)
+    except Exception as e:
+        print(f"[ChromaDB ERROR] 컬렉션 로드 실패 → 초기화 진행: {e}")
+        
+        # 🔥 깨진 DB 삭제
+        reset_collection(client)
+        
+        # 🔥 캐시 초기화 (중요)
+        get_collection.cache_clear()
+        
+        # 🔥 다시 생성
+        return client.get_or_create_collection(COLLECTION_NAME)
 
 
 @lru_cache(maxsize=1)

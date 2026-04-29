@@ -54,6 +54,7 @@ from backend.history import (
 from backend.rag import (
     NO_CONTEXT_ANSWER,
     RELEVANCE_THRESHOLD,
+    _get_content,
     ask_rag,
     ask_rag_stream,
     clear_caches,
@@ -108,14 +109,12 @@ app.add_middleware(
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    # HTTPException (404, 401 등)은 원래 의도된 에러이므로 그대로 반환
     if isinstance(exc, HTTPException):
         return JSONResponse(
             status_code=exc.status_code,
             content={"detail": exc.detail},
         )
     
-    # 그 외의 예기치 못한 런타임 오류(500)는 로깅 후 정제된 메시지 반환
     logger.error(f"UNHANDLED ERROR: {request.method} {request.url}")
     logger.error(f"Exception Type: {type(exc).__name__}")
     logger.error(f"Exception Detail: {str(exc)}", exc_info=True)
@@ -231,14 +230,27 @@ def get_stats(current_user: UserInfo = Depends(get_current_user)):
 
 @app.get("/models")
 def list_models():
+    """사용 가능한 ollama 모델 목록 반환 (dict / Pydantic 모두 지원)."""
     try:
         models_info = ollama.list()
-        model_list = [
-            m.model if hasattr(m, "model") else m["model"]
-            for m in models_info["models"]
-        ]
+        # 신버전: models_info.models (Pydantic), 구버전: models_info["models"] (dict)
+        if isinstance(models_info, dict):
+            raw_models = models_info.get("models", [])
+        else:
+            raw_models = getattr(models_info, "models", [])
+
+        model_list = []
+        for m in raw_models:
+            if isinstance(m, dict):
+                name = m.get("model") or m.get("name", "")
+            else:
+                name = getattr(m, "model", None) or getattr(m, "name", "") or str(m)
+            if name:
+                model_list.append(name)
+
         return {"models": sorted(model_list)}
     except Exception as error:
+        logger.error(f"모델 목록 조회 실패: {error}", exc_info=True)
         raise HTTPException(status_code=500, detail="모델 목록을 가져오지 못했습니다.") from error
 
 
@@ -291,7 +303,6 @@ def change_password_endpoint(
     body: PasswordChange,
     current_user: UserInfo = Depends(get_current_user),
 ):
-    """현재 사용자의 비밀번호를 변경합니다."""
     try:
         change_password(current_user.id, body.old_password, body.new_password)
     except ValueError as exc:
@@ -316,7 +327,6 @@ def get_user_role(
     user_id: str,
     admin: UserInfo = Depends(get_current_admin),
 ):
-    """특정 사용자의 권한 상태를 조회합니다."""
     user = get_user_by_id(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
@@ -329,7 +339,6 @@ def change_user_role(
     body: RoleUpdate,
     admin: UserInfo = Depends(get_current_admin),
 ):
-    """관리자가 특정 사용자의 권한을 변경합니다."""
     if user_id == admin.id:
         raise HTTPException(status_code=400, detail="자기 자신의 권한은 변경할 수 없습니다.")
     success = update_user_role(user_id, body.is_admin)
@@ -382,7 +391,6 @@ def get_activity_logs(
     from backend.history import HISTORY_DB_PATH
     from backend.auth import USERS_DB_PATH
 
-    # 1. 사용자 ID -> 이름 매핑 생성
     user_map = {}
     with sqlite3.connect(USERS_DB_PATH) as u_conn:
         u_conn.row_factory = sqlite3.Row
@@ -390,7 +398,6 @@ def get_activity_logs(
         for u in users:
             user_map[u["id"]] = u["username"]
 
-    # 2. 로그 조회
     with sqlite3.connect(HISTORY_DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         
@@ -402,14 +409,13 @@ def get_activity_logs(
         """
         params = []
         if user_id:
-            # 사용자명으로도 검색 가능하게 함
             matched_ids = [uid for uid, uname in user_map.items() if user_id.lower() in uname.lower()]
             if matched_ids:
                 placeholders = ",".join(["?"] * len(matched_ids))
                 query += f" AND s.user_id IN ({placeholders})"
                 params.extend(matched_ids)
             else:
-                query += " AND s.user_id = 'none'" # 검색 결과 없음 처리
+                query += " AND s.user_id = 'none'"
         
         if role:
             query += " AND m.role = ?"
@@ -420,7 +426,6 @@ def get_activity_logs(
         
         logs = conn.execute(query, params).fetchall()
 
-    # 3. 데이터 결합
     result = []
     for log in logs:
         d = dict(log)
@@ -506,11 +511,12 @@ def ask(question: Question, current_user: UserInfo = Depends(get_current_user)):
     add_message(current_session_id, "user", question.query)
 
     if not should_retrieve(question.query):
+        # [FIX] 선택된 모델 사용 + 신/구 ollama 라이브러리 호환 응답 파싱
         res = ollama.chat(
-            model=CHAT_MODEL_NAME,
+            model=question.model or CHAT_MODEL_NAME,
             messages=[{"role": "user", "content": question.query}]
         )
-        result = {"answer": res["message"]["content"], "context": "", "sources": [], "score": 0.0}
+        result = {"answer": _get_content(res), "context": "", "sources": [], "score": 0.0}
     else:
         result = ask_rag(
             question.query,
@@ -676,7 +682,6 @@ def get_files_from_db(current_user: UserInfo = Depends(get_current_user)):
     for name in indexed_names:
         path = user_data_dir / name
 
-        # 파일별 청크 수 및 태그 조회
         try:
             chunk_res = collection.get(
                 where={"$and": [{"source": name}, {"user_id": current_user.id}]},
@@ -685,7 +690,6 @@ def get_files_from_db(current_user: UserInfo = Depends(get_current_user)):
             ids = chunk_res.get("ids") or []
             chunk_count = len(ids)
             
-            # 첫 번째 청크의 메타데이터에서 태그 추출
             metadatas = chunk_res.get("metadatas") or []
             tags = []
             if metadatas and metadatas[0].get("tags"):
@@ -750,7 +754,6 @@ def update_file_tags(
     collection = get_collection()
     where_filter = {"$and": [{"source": source_name}, {"user_id": current_user.id}]}
     
-    # 해당 소스의 모든 청크에 대해 태그 업데이트
     res = collection.get(where=where_filter, include=["metadatas"])
     ids = res.get("ids") or []
     metadatas = res.get("metadatas") or []

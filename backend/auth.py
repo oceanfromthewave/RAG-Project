@@ -111,7 +111,7 @@ def create_user(username: str, password: str) -> dict:
 
     user_id = str(uuid4())
     now = datetime.now(timezone.utc).isoformat()
-    hashed = pwd_context.hash(password)
+    hashed = pwd_context.hash(password[:72])  # bcrypt는 72자 이상을 무시하므로 자르기
 
     with sqlite3.connect(USERS_DB_PATH) as conn:
         conn.execute(
@@ -147,10 +147,10 @@ def change_password(user_id: str, old_password: str, new_password: str) -> None:
         ).fetchone()
         if not row:
             raise ValueError("사용자를 찾을 수 없습니다.")
-        if not pwd_context.verify(old_password, row["hashed_password"]):
+        if not pwd_context.verify(old_password[:72], row["hashed_password"]):
             raise ValueError("현재 비밀번호가 올바르지 않습니다.")
 
-        new_hashed = pwd_context.hash(new_password)
+        new_hashed = pwd_context.hash(new_password[:72])
         conn.execute(
             "UPDATE users SET hashed_password = ? WHERE id = ?",
             (new_hashed, user_id),
@@ -161,7 +161,7 @@ def change_password(user_id: str, old_password: str, new_password: str) -> None:
 # ── 비밀번호 검증 / 토큰 생성 ─────────────────────────────
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    return pwd_context.verify(plain[:72], hashed)
 
 
 def create_access_token(user_id: str, username: str, is_admin: bool) -> str:
