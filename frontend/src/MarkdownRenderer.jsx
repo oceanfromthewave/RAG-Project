@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-export function inlineFormat(text, keyPrefix = "") {
+function inlineFormat(text, keyPrefix = "") {
   if (!text) return null;
   const parts = [];
   // **bold**, *italic*, `code`, [text](url)
@@ -30,7 +30,7 @@ export function inlineFormat(text, keyPrefix = "") {
   return parts.length === 0 ? <span key={`${keyPrefix}-fallback`}>{text}</span> : parts;
 }
 
-export function CodeBlock({ lang, code }) {
+function CodeBlock({ lang, code }) {
   const [copied, setCopied] = useState(false);
   const handleCopy = () => {
     navigator.clipboard.writeText(code).then(() => {
@@ -51,7 +51,7 @@ export function CodeBlock({ lang, code }) {
   );
 }
 
-export function TableBlock({ lines, blockIdx }) {
+function TableBlock({ lines, blockIdx }) {
   if (lines.length < 2) return null;
   const parseRow = (line) => line.split("|").filter((_, i, arr) => (i > 0 && i < arr.length - 1) || (arr.length === 1)).map(c => c.trim());
   
@@ -78,7 +78,7 @@ export function TableBlock({ lines, blockIdx }) {
   );
 }
 
-export function TextBlock({ text, blockIdx }) {
+function TextBlock({ text, blockIdx }) {
   const lines = text.split("\n");
   const elements = [];
   let i = 0;

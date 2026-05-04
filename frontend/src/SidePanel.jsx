@@ -24,12 +24,16 @@ export default function SidePanel({
   libraryDensity,
   fileFilter,
   setFileFilter,
+  fileSortKey,
+  setFileSortKey,
   selectedFiles,
   deleteSelectedFiles,
   filteredFiles,
   files,
   toggleFileSelection,
   deleteFile,
+  reindexFile,
+  reindexingFile,
   dropdownRef,
   isModelDropdownOpen,
   setIsModelDropdownOpen,
@@ -50,6 +54,13 @@ export default function SidePanel({
       setTagInput({ name: "", value: "" });
     }
   };
+
+  const SORT_OPTIONS = [
+    { key: "name",   label: "이름순" },
+    { key: "size",   label: "크기순" },
+    { key: "date",   label: "날짜순" },
+    { key: "chunks", label: "청크순" },
+  ];
 
   return (
     <aside className="side-panel" aria-label="문서 관리">
@@ -97,11 +108,41 @@ export default function SidePanel({
           </div>
           <div className="file-toolbar">
             <div className="file-search">
-              <input type="text" value={fileFilter} onChange={(e) => setFileFilter(e.target.value)} placeholder="파일명으로 찾기..." aria-label="문서 검색" />
+              <input
+                type="text"
+                value={fileFilter}
+                onChange={(e) => setFileFilter(e.target.value)}
+                placeholder="파일명으로 찾기..."
+                aria-label="문서 검색"
+              />
             </div>
-            {selectedFiles.length > 0 && (
-              <button className="btn-batch-del" onClick={deleteSelectedFiles}>삭제 ({selectedFiles.length})</button>
-            )}
+            <div style={{ display: "flex", gap: "6px", alignItems: "center", marginTop: "6px" }}>
+              {/* 정렬 셀렉터 */}
+              <select
+                value={fileSortKey}
+                onChange={(e) => setFileSortKey(e.target.value)}
+                aria-label="정렬 기준"
+                style={{
+                  fontSize: "0.72rem",
+                  padding: "3px 6px",
+                  borderRadius: "6px",
+                  border: "1px solid var(--line)",
+                  background: "var(--surface-raised)",
+                  color: "var(--text-muted)",
+                  cursor: "pointer",
+                  flexShrink: 0,
+                }}
+              >
+                {SORT_OPTIONS.map(opt => (
+                  <option key={opt.key} value={opt.key}>{opt.label}</option>
+                ))}
+              </select>
+              {selectedFiles.length > 0 && (
+                <button className="btn-batch-del" onClick={deleteSelectedFiles} style={{ flex: 1 }}>
+                  삭제 ({selectedFiles.length})
+                </button>
+              )}
+            </div>
           </div>
           <div className="file-list" role="list" aria-label="인덱싱된 문서 목록">
             {filesLoading ? (
@@ -142,6 +183,11 @@ export default function SidePanel({
                     <span className="file-name" title={file.name}>{file.name}</span>
                     <div className="file-meta">
                       <span>{formatFileSize(file.size)}</span>
+                      {file.chunks > 0 && (
+                        <span style={{ color: "var(--text-muted)", fontSize: "0.68rem" }}>
+                          · {file.chunks}청크
+                        </span>
+                      )}
                       {file.tags && file.tags.length > 0 && (
                         <div className="file-tags" style={{ display: "flex", gap: "4px", marginTop: "4px", flexWrap: "wrap" }}>
                           {file.tags.map(tag => (
@@ -151,7 +197,24 @@ export default function SidePanel({
                       )}
                     </div>
                   </div>
-                  <div className="file-item-actions" onClick={e => e.stopPropagation()} style={{ display: "flex", gap: "5px" }}>
+                  <div className="file-item-actions" onClick={e => e.stopPropagation()} style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+                    {/* 재인덱싱 버튼 */}
+                    <button
+                      className="btn-tag-edit"
+                      onClick={() => reindexFile(file.name)}
+                      disabled={reindexingFile === file.name}
+                      title="재인덱싱"
+                      style={{
+                        background: "none", border: "none",
+                        color: reindexingFile === file.name ? "var(--accent)" : "var(--text-muted)",
+                        cursor: reindexingFile === file.name ? "wait" : "pointer",
+                        fontSize: "0.85rem",
+                        lineHeight: 1,
+                        animation: reindexingFile === file.name ? "spin 1s linear infinite" : "none",
+                      }}
+                    >
+                      ↺
+                    </button>
                     <button 
                       className="btn-tag-edit" 
                       onClick={() => setTagInput({ name: file.name, value: file.tags?.join(", ") || "" })}

@@ -6,19 +6,21 @@ import SidePanel from "./SidePanel";
 import { DocSidebar } from "./ChatComponents";
 import { QUICK_PROMPTS, TEXT } from "./constants";
 
-export default function Workspace({ rag, user }) {
+export default function Workspace({ rag }) {
   const { 
     view, setView, sidebarOpen, docSidebar, setDocSidebar, stats,
     sessions, sessionFilter, setSessionFilter, currentSessionId, loadSession,
+    sessionSearchResults, sessionSearchLoading, handleSessionSearch,
     editingSessionId, editingTitle, setEditingTitle, submitEditSession,
     handleEditKeyDown, startEditSession, deleteChatSession, handleResetChat,
-    activeStreams, messages, chatLoading, handleFeedback, handleRegenerate,
+    activeStreamIds, messages, chatLoading, handleFeedback, handleRegenerate,
     chatEndRef, isAtBottom, scrollToBottom, quickPromptsRef, sendMessage,
     composerDragActive, setComposerDragActive, attachedFiles, setAttachedFiles,
     addToast, textareaRef, input, setInput, statusMessage, stopGeneration,
     handleExportChat, handleScroll, dragActive, setDragActive, uploading, filesLoading, historyLoading,
-    fileInputRef, handleDrop, handleUpload, fileFilter, setFileFilter,
+    fileInputRef, handleDrop, handleUpload, fileFilter, setFileFilter, fileSortKey, setFileSortKey,
     selectedFiles, deleteSelectedFiles, files, toggleFileSelection, deleteFile,
+    reindexFile, reindexingFile,
     dropdownRef, isModelDropdownOpen, setIsModelDropdownOpen, selectedModel,
     setSelectedModel, availableModels, updateFileTags,
     workspaces, currentWorkspaceId, setCurrentWorkspaceId, handleCreateWorkspace, handleDeleteWorkspace
@@ -44,7 +46,16 @@ export default function Workspace({ rag, user }) {
     ? `${Math.max(1, Math.round(stats.total_chunks / stats.indexed_files))}청크/문서`
     : "비어 있음";
 
-  const filteredFiles = files.filter(f => f.name.toLowerCase().includes(fileFilter.trim().toLowerCase()));
+  // 파일 필터 + 정렬
+  const SORT_FNS = {
+    name:   (a, b) => a.name.localeCompare(b.name),
+    size:   (a, b) => b.size - a.size,
+    date:   (a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""),
+    chunks: (a, b) => (b.chunks || 0) - (a.chunks || 0),
+  };
+  const filteredFiles = files
+    .filter(f => f.name.toLowerCase().includes(fileFilter.trim().toLowerCase()))
+    .sort(SORT_FNS[fileSortKey] || SORT_FNS.name);
 
   return (
     <main className={`workspace ${!sidebarOpen ? "collapsed" : ""} ${docSidebar.isOpen ? "show-doc" : ""}`}>
@@ -57,6 +68,9 @@ export default function Workspace({ rag, user }) {
         sessions={sessions}
         sessionFilter={sessionFilter}
         setSessionFilter={setSessionFilter}
+        handleSessionSearch={handleSessionSearch}
+        sessionSearchResults={sessionSearchResults}
+        sessionSearchLoading={sessionSearchLoading}
         currentSessionId={currentSessionId}
         loadSession={loadSession}
         editingSessionId={editingSessionId}
@@ -67,7 +81,7 @@ export default function Workspace({ rag, user }) {
         startEditSession={startEditSession}
         deleteChatSession={deleteChatSession}
         handleResetChat={handleResetChat}
-        activeStreams={activeStreams}
+        activeStreamIds={activeStreamIds}
       />
 
       <ChatPanel
@@ -111,12 +125,16 @@ export default function Workspace({ rag, user }) {
         libraryDensity={libraryDensity}
         fileFilter={fileFilter}
         setFileFilter={setFileFilter}
+        fileSortKey={fileSortKey}
+        setFileSortKey={setFileSortKey}
         selectedFiles={selectedFiles}
         deleteSelectedFiles={deleteSelectedFiles}
         filteredFiles={filteredFiles}
         files={files}
         toggleFileSelection={toggleFileSelection}
         deleteFile={deleteFile}
+        reindexFile={reindexFile}
+        reindexingFile={reindexingFile}
         dropdownRef={dropdownRef}
         isModelDropdownOpen={isModelDropdownOpen}
         setIsModelDropdownOpen={setIsModelDropdownOpen}

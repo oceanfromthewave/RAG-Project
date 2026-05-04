@@ -9,6 +9,9 @@ export default function HistorySidebar({
   sessions,
   sessionFilter,
   setSessionFilter,
+  handleSessionSearch,
+  sessionSearchResults,
+  sessionSearchLoading,
   currentSessionId,
   loadSession,
   editingSessionId,
@@ -19,15 +22,23 @@ export default function HistorySidebar({
   startEditSession,
   deleteChatSession,
   handleResetChat,
-  activeStreams
+  activeStreamIds
 }) {
   const [isWsOpen, setIsWsOpen] = useState(false);
 
-  const filteredSessions = sessions.filter(s =>
-    s.title.toLowerCase().includes(sessionFilter.toLowerCase())
-  );
+  // sessionSearchResults가 null이면 제목 기반 필터, 아니면 전체 검색 결과 사용
+  const isSearchMode = sessionSearchResults !== null;
+  const displaySessions = isSearchMode
+    ? sessionSearchResults
+    : sessions.filter(s => s.title.toLowerCase().includes(sessionFilter.toLowerCase()));
 
   const currentWorkspace = workspaces.find(ws => ws.id === currentWorkspaceId);
+
+  const handleSearchChange = (e) => {
+    const val = e.target.value;
+    setSessionFilter(val);
+    if (handleSessionSearch) handleSessionSearch(val);
+  };
 
   return (
     <nav className="history-sidebar" aria-label="대화 기록">
@@ -101,32 +112,48 @@ export default function HistorySidebar({
         <button type="button" className="btn-new-chat" onClick={handleResetChat}>
           <span className="plus-icon">+</span>새 채팅 시작
         </button>
-        <div className="history-search">
+        <div className="history-search" style={{ position: "relative" }}>
           <input
             type="text"
             value={sessionFilter}
-            onChange={(e) => setSessionFilter(e.target.value)}
-            placeholder="대화 검색..."
+            onChange={handleSearchChange}
+            placeholder="대화 전체 검색..."
             aria-label="대화 기록 검색"
           />
+          {sessionSearchLoading && (
+            <span style={{
+              position: "absolute", right: "8px", top: "50%", transform: "translateY(-50%)",
+              fontSize: "0.7rem", color: "var(--text-muted)", pointerEvents: "none"
+            }}>
+              ⟳
+            </span>
+          )}
         </div>
+        {isSearchMode && (
+          <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", padding: "2px 4px" }}>
+            {displaySessions.length > 0
+              ? `${displaySessions.length}개 대화에서 발견`
+              : "검색 결과 없음"}
+          </div>
+        )}
       </div>
+
       <div className="history-list">
-        {filteredSessions.length === 0 ? (
+        {displaySessions.length === 0 ? (
           <div className="empty-state" style={{ padding: "40px 20px" }}>
             <p style={{ opacity: 0.5, fontSize: "0.8rem" }}>
               {sessions.length === 0 ? "저장된 대화가 없습니다." : "검색 결과가 없습니다."}
             </p>
           </div>
         ) : (
-          filteredSessions.map((session) => (
+          displaySessions.map((session) => (
             <div
               key={session.id}
               className={`history-item ${currentSessionId === session.id ? "active" : ""}`}
               onClick={() => editingSessionId !== session.id && loadSession(session.id)}
             >
               <span className="history-icon">
-                {activeStreams.has(session.id) ? "⟳" : "💬"}
+                {activeStreamIds.includes(session.id) ? "⟳" : "💬"}
               </span>
               <div className="history-content">
                 {editingSessionId === session.id ? (
@@ -151,6 +178,21 @@ export default function HistorySidebar({
                 <span className="history-date">
                   {new Date(session.updated_at).toLocaleDateString()}
                 </span>
+                {/* 전체 검색 모드에서 매칭 스니펫 표시 */}
+                {isSearchMode && session.matched_snippet && (
+                  <span style={{
+                    display: "block",
+                    fontSize: "0.68rem",
+                    color: "var(--text-muted)",
+                    marginTop: "2px",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    maxWidth: "180px",
+                  }} title={session.matched_snippet}>
+                    {session.matched_snippet}
+                  </span>
+                )}
               </div>
               {editingSessionId !== session.id && (
                 <button

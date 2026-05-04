@@ -63,7 +63,7 @@ function AuthenticatedApp({ authFetch, user, logout }) {
       />
 
       <Suspense fallback={<div className="loading-overlay">컴포넌트 로드 중...</div>}>
-        <Workspace rag={rag} user={user} />
+        <Workspace rag={rag} />
       </Suspense>
     </div>
   );

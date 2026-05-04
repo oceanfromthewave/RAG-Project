@@ -4,6 +4,7 @@ import os
 import json
 import shutil
 import logging
+import re
 from pathlib import Path
 from uuid import uuid4
 from datetime import datetime
@@ -14,7 +15,7 @@ from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile, st
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.security import OAuth2PasswordRequestForm
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 load_dotenv()
 
@@ -38,10 +39,11 @@ from backend.auth import (
     update_user_role,
     verify_password,
 )
-from backend.security import login_limiter, register_limiter, get_client_ip, login_guard
+from backend.security import login_limiter, register_limiter, ask_limiter, upload_limiter, get_client_ip, login_guard
 from backend.history import (
     add_message,
     create_session,
+    delete_user_history,
     delete_session,
     get_session_messages,
     get_session_owner,
@@ -58,6 +60,7 @@ from backend.rag import (
     ask_rag,
     ask_rag_stream,
     clear_caches,
+    generate_session_title,
     should_retrieve,
 )
 from backend.store import (
@@ -76,8 +79,21 @@ from backend.store import (
 
 app = FastAPI(title="Internal RAG API")
 
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
+    if origin.strip()
+]
 MAX_UPLOAD_SIZE = int(os.getenv("MAX_UPLOAD_SIZE", 10485760))
+MAX_FILES_PER_UPLOAD = int(os.getenv("MAX_FILES_PER_UPLOAD", 5))
+MAX_QUESTION_LENGTH = int(os.getenv("MAX_QUESTION_LENGTH", 4000))
+MAX_HISTORY_MESSAGES = int(os.getenv("MAX_HISTORY_MESSAGES", 12))
+APP_ENV = os.getenv("APP_ENV", os.getenv("NODE_ENV", "development")).lower()
+ALLOW_REGISTRATION = os.getenv(
+    "ALLOW_REGISTRATION",
+    "false" if APP_ENV in {"prod", "production"} else "true",
+).lower() == "true"
+MODEL_NAME_RE = re.compile(r"^[A-Za-z0-9_.:/-]{1,80}$")
 ALLOWED_EXTENSIONS = {
     ".txt", ".pdf", ".docx", ".py", ".js", ".ts", ".jsx", ".tsx",
     ".html", ".css", ".json", ".md", ".java", ".c", ".cpp", ".h", ".go",
@@ -99,7 +115,7 @@ from fastapi.responses import JSONResponse
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
+    allow_credentials="*" not in ALLOWED_ORIGINS,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["*"],
 )
@@ -128,25 +144,39 @@ async def global_exception_handler(request: Request, exc: Exception):
 # ── Pydantic 모델 ──────────────────────────────────────────
 
 class Message(BaseModel):
-    role: str
-    content: str
+    role: str = Field(pattern="^(user|assistant|system)$")
+    content: str = Field(min_length=1, max_length=MAX_QUESTION_LENGTH)
 
 
 class Question(BaseModel):
-    query: str
-    model: str | None = None
-    history: list[Message] | None = None
+    query: str = Field(min_length=1, max_length=MAX_QUESTION_LENGTH)
+    model: str | None = Field(default=None, max_length=80)
+    history: list[Message] | None = Field(default=None, max_length=MAX_HISTORY_MESSAGES)
     session_id: str | None = None
     workspace_id: str | None = None
-    selected_files: list[str] = []
+    selected_files: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("model")
+    @classmethod
+    def validate_model_name(cls, value: str | None) -> str | None:
+        if value is None or value == "":
+            return value
+        if not MODEL_NAME_RE.fullmatch(value):
+            raise ValueError("Invalid model name.")
+        return value
+
+    @field_validator("selected_files")
+    @classmethod
+    def validate_selected_files(cls, value: list[str]) -> list[str]:
+        return [normalize_source_name(name) for name in value]
 
 
 class SessionUpdate(BaseModel):
-    title: str
+    title: str = Field(min_length=1, max_length=120)
 
 
 class WorkspaceCreate(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=80)
 
 
 class RoleUpdate(BaseModel):
@@ -154,12 +184,12 @@ class RoleUpdate(BaseModel):
 
 
 class FeedbackUpdate(BaseModel):
-    feedback: int
+    feedback: int = Field(ge=-1, le=1)
 
 
 class PasswordChange(BaseModel):
-    old_password: str
-    new_password: str
+    old_password: str = Field(min_length=1, max_length=72)
+    new_password: str = Field(min_length=1, max_length=72)
 
 
 ensure_storage_dirs()
@@ -186,10 +216,18 @@ def remove_workspace(workspace_id: str, current_user: UserInfo = Depends(get_cur
 
 # ── 유틸리티 ───────────────────────────────────────────────
 
-def save_upload(file: UploadFile, target_path: Path):
+def save_upload(file: UploadFile, target_path: Path, max_size: int = MAX_UPLOAD_SIZE):
     target_path.parent.mkdir(parents=True, exist_ok=True)
+    total = 0
     with target_path.open("wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+        while chunk := file.file.read(1024 * 1024):
+            total += len(chunk)
+            if total > max_size:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail=f"File is too large. Maximum allowed size is {max_size // (1024 * 1024)}MB.",
+                )
+            buffer.write(chunk)
 
 
 def build_upload_temp_path(source_name: str, user_id: str = "") -> Path:
@@ -197,11 +235,60 @@ def build_upload_temp_path(source_name: str, user_id: str = "") -> Path:
     return DATA_DIR / f".upload-{prefix}{uuid4().hex}{Path(source_name).suffix}"
 
 
+def sanitize_selected_sources(selected_files: list[str], user_id: str) -> list[str]:
+    normalized = [normalize_source_name(name) for name in selected_files]
+    allowed = set(list_indexed_sources(user_id=user_id))
+    missing = [name for name in normalized if name not in allowed]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Unknown selected file: {missing[0]}")
+    return normalized
+
+
 # ── 기본 엔드포인트 ────────────────────────────────────────
 
 @app.get("/")
 def root():
     return {"message": "RAG API running"}
+
+
+@app.get("/health")
+def health_check():
+    """ollama 연결 및 ChromaDB 상태를 확인하는 헬스체크 엔드포인트."""
+    checks: dict[str, str] = {}
+
+    # ollama 연결 확인
+    try:
+        models_info = ollama.list()
+        if isinstance(models_info, dict):
+            model_count = len(models_info.get("models", []))
+        else:
+            model_count = len(getattr(models_info, "models", []) or [])
+        checks["ollama"] = f"ok ({model_count} models)"
+    except Exception as e:
+        checks["ollama"] = f"error: {e}"
+
+    # ChromaDB 연결 확인
+    try:
+        total = get_collection().count()
+        checks["chromadb"] = f"ok ({total} chunks)"
+    except Exception as e:
+        checks["chromadb"] = f"error: {e}"
+
+    # SQLite 히스토리 DB 확인
+    try:
+        from backend.history import HISTORY_DB_PATH
+        import sqlite3
+        with sqlite3.connect(HISTORY_DB_PATH) as conn:
+            conn.execute("SELECT 1")
+        checks["history_db"] = "ok"
+    except Exception as e:
+        checks["history_db"] = f"error: {e}"
+
+    all_ok = all(v.startswith("ok") for v in checks.values())
+    return {
+        "status": "healthy" if all_ok else "degraded",
+        "checks": checks,
+    }
 
 
 @app.get("/stats")
@@ -229,11 +316,10 @@ def get_stats(current_user: UserInfo = Depends(get_current_user)):
 
 
 @app.get("/models")
-def list_models():
+def list_models(current_user: UserInfo = Depends(get_current_user)):
     """사용 가능한 ollama 모델 목록 반환 (dict / Pydantic 모두 지원)."""
     try:
         models_info = ollama.list()
-        # 신버전: models_info.models (Pydantic), 구버전: models_info["models"] (dict)
         if isinstance(models_info, dict):
             raw_models = models_info.get("models", [])
         else:
@@ -259,6 +345,8 @@ def list_models():
 @app.post("/auth/register", response_model=Token, status_code=201)
 def register(request: Request, body: UserCreate):
     register_limiter.check(request)
+    if not ALLOW_REGISTRATION:
+        raise HTTPException(status_code=403, detail="Public registration is disabled.")
     try:
         user = create_user(body.username, body.password)
     except ValueError as exc:
@@ -369,6 +457,16 @@ def delete_user_account(user_id: str, admin: UserInfo = Depends(get_current_admi
     if user_id == admin.id:
         raise HTTPException(status_code=400, detail="자기 자신은 삭제할 수 없습니다.")
 
+    for source in list_indexed_sources(user_id=user_id):
+        delete_source(source, user_id=user_id)
+
+    user_data_dir = DATA_DIR / user_id
+    if user_data_dir.exists():
+        shutil.rmtree(user_data_dir)
+
+    delete_user_history(user_id)
+    clear_caches()
+
     import sqlite3
     from backend.auth import USERS_DB_PATH
     with sqlite3.connect(USERS_DB_PATH) as conn:
@@ -384,7 +482,7 @@ def delete_user_account(user_id: str, admin: UserInfo = Depends(get_current_admi
 def get_activity_logs(
     user_id: str | None = Query(None),
     role: str | None = Query(None),
-    limit: int = Query(100),
+    limit: int = Query(100, ge=1, le=500),
     admin: UserInfo = Depends(get_current_admin)
 ):
     import sqlite3
@@ -418,6 +516,8 @@ def get_activity_logs(
                 query += " AND s.user_id = 'none'"
         
         if role:
+            if role not in {"user", "assistant"}:
+                raise HTTPException(status_code=400, detail="Invalid role filter.")
             query += " AND m.role = ?"
             params.append(role)
             
@@ -436,6 +536,32 @@ def get_activity_logs(
 
 
 # ── 세션 엔드포인트 ────────────────────────────────────────
+
+@app.get("/sessions/search")
+def search_sessions(
+    q: str = Query(..., min_length=1),
+    current_user: UserInfo = Depends(get_current_user)
+):
+    """메시지 내용으로 세션을 전체 검색합니다."""
+    import sqlite3
+    from backend.history import HISTORY_DB_PATH
+
+    keyword = f"%{q.strip()}%"
+    with sqlite3.connect(HISTORY_DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("""
+            SELECT DISTINCT s.id, s.title, s.updated_at, s.workspace_id,
+                   substr(m.content, 1, 120) AS matched_snippet
+            FROM sessions s
+            JOIN messages m ON m.session_id = s.id
+            WHERE s.user_id = ?
+              AND m.content LIKE ?
+            ORDER BY s.updated_at DESC
+            LIMIT 30
+        """, (current_user.id, keyword)).fetchall()
+
+    return {"results": [dict(r) for r in rows]}
+
 
 @app.get("/sessions")
 def list_chat_sessions(
@@ -491,8 +617,10 @@ def set_message_feedback(
 # ── 채팅 엔드포인트 ────────────────────────────────────────
 
 @app.post("/ask")
-def ask(question: Question, current_user: UserInfo = Depends(get_current_user)):
+def ask(request: Request, question: Question, current_user: UserInfo = Depends(get_current_user)):
+    ask_limiter.check(request)
     history_dicts = [m.model_dump() for m in question.history] if question.history else []
+    selected_sources = sanitize_selected_sources(question.selected_files, current_user.id)
 
     current_session_id = question.session_id
     if not current_session_id:
@@ -511,7 +639,6 @@ def ask(question: Question, current_user: UserInfo = Depends(get_current_user)):
     add_message(current_session_id, "user", question.query)
 
     if not should_retrieve(question.query):
-        # [FIX] 선택된 모델 사용 + 신/구 ollama 라이브러리 호환 응답 파싱
         res = ollama.chat(
             model=question.model or CHAT_MODEL_NAME,
             messages=[{"role": "user", "content": question.query}]
@@ -523,7 +650,7 @@ def ask(question: Question, current_user: UserInfo = Depends(get_current_user)):
             model=question.model,
             history=history_dicts,
             user_id=current_user.id,
-            selected_sources=question.selected_files
+            selected_sources=selected_sources
         )
 
     add_message(
@@ -535,8 +662,10 @@ def ask(question: Question, current_user: UserInfo = Depends(get_current_user)):
 
 
 @app.post("/ask-stream")
-def ask_stream(question: Question, current_user: UserInfo = Depends(get_current_user)):
+def ask_stream(request: Request, question: Question, current_user: UserInfo = Depends(get_current_user)):
+    ask_limiter.check(request)
     history_dicts = [m.model_dump() for m in question.history] if question.history else []
+    selected_sources = sanitize_selected_sources(question.selected_files, current_user.id)
 
     current_session_id = question.session_id
     is_new_session = False
@@ -563,6 +692,7 @@ def ask_stream(question: Question, current_user: UserInfo = Depends(get_current_
 
         full_answer = ""
         meta = None
+        message_saved = False  # 정상 완료 시 finally 중복 저장 방지
 
         try:
             for event in ask_rag_stream(
@@ -570,7 +700,7 @@ def ask_stream(question: Question, current_user: UserInfo = Depends(get_current_
                 model=question.model,
                 history=history_dicts,
                 user_id=current_user.id,
-                selected_sources=question.selected_files
+                selected_sources=selected_sources
             ):
                 if event["type"] == "chunk":
                     full_answer += event["content"]
@@ -578,8 +708,46 @@ def ask_stream(question: Question, current_user: UserInfo = Depends(get_current_
                     meta = event
                 yield json.dumps(event, ensure_ascii=False) + "\n"
 
-        finally:
+            # ── 스트림 정상 완료: 메시지 저장 후 message_id 전송 ──
             if full_answer.strip() or meta:
+                final_content = full_answer
+                if not final_content.strip():
+                    if meta and meta.get("score", 0) < RELEVANCE_THRESHOLD:
+                        final_content = NO_CONTEXT_ANSWER
+                    else:
+                        final_content = "답변 생성 중 오류가 발생했습니다."
+
+                msg_id = add_message(
+                    current_session_id,
+                    role="assistant",
+                    content=final_content,
+                    sources=meta.get("sources") if meta else [],
+                    context=meta.get("context") if meta else "",
+                    score=meta.get("score") if meta else 0.0,
+                )
+                message_saved = True
+                # 프론트엔드에 실제 DB message_id 전달 (피드백 기능에 필요)
+                yield json.dumps({"type": "message_id", "id": msg_id}, ensure_ascii=False) + "\n"
+
+                # ── 새 세션인 경우 LLM으로 제목 자동 생성 ──
+                if is_new_session and final_content.strip() and len(final_content) > 30:
+                    try:
+                        auto_title = generate_session_title(
+                            question.query, final_content, model=question.model
+                        )
+                        if auto_title:
+                            update_session_title(current_session_id, auto_title)
+                            # 제목 이벤트를 프론트로 전송해 사이드바 즐시 반영
+                            yield json.dumps({"type": "title", "title": auto_title, "session_id": current_session_id}, ensure_ascii=False) + "\n"
+                    except Exception as e:
+                        logger.warning(f"자동 제목 생성 실패: {e}")
+
+        except Exception as e:
+            logger.error(f"스트림 생성 오류: {e}", exc_info=True)
+
+        finally:
+            # 클라이언트가 중도 취소한 경우에만 여기서 저장 (중복 방지)
+            if not message_saved and (full_answer.strip() or meta):
                 final_content = full_answer
                 if not final_content.strip():
                     if meta and meta.get("score", 0) < RELEVANCE_THRESHOLD:
@@ -603,20 +771,29 @@ def ask_stream(question: Question, current_user: UserInfo = Depends(get_current_
 
 @app.post("/upload")
 async def upload(
+    request: Request,
     files: list[UploadFile] = File(...),
     current_user: UserInfo = Depends(get_current_user),
 ):
+    upload_limiter.check(request)
+    if len(files) > MAX_FILES_PER_UPLOAD:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many files. Maximum allowed is {MAX_FILES_PER_UPLOAD}.",
+        )
+
     results = []
     user_data_dir = DATA_DIR / current_user.id
     user_data_dir.mkdir(parents=True, exist_ok=True)
 
     for file in files:
+        temp_path: Path | None = None
         ext = Path(file.filename or "").suffix.lower()
         if ext not in ALLOWED_EXTENSIONS:
             results.append({"file": file.filename, "status": "error", "message": f"허용되지 않는 형식 ({ext})"})
             continue
 
-        content_length = file.size if hasattr(file, "size") else 0
+        content_length = getattr(file, "size", 0) or 0
         if content_length > MAX_UPLOAD_SIZE:
             results.append({"file": file.filename, "status": "error", "message": "용량 초과 (최대 10MB)"})
             continue
@@ -626,7 +803,7 @@ async def upload(
             target_path = user_data_dir / source_name
             temp_path = build_upload_temp_path(source_name, user_id=current_user.id)
 
-            save_upload(file, temp_path)
+            save_upload(file, temp_path, max_size=MAX_UPLOAD_SIZE)
             text = read_document(temp_path)
 
             if not text.strip():
@@ -642,6 +819,8 @@ async def upload(
             logger.error(f"Error uploading {file.filename}: {error}")
             results.append({"file": file.filename, "status": "error", "message": str(error)})
         finally:
+            if temp_path and temp_path.exists():
+                temp_path.unlink(missing_ok=True)
             await file.close()
 
     clear_caches()
@@ -719,6 +898,23 @@ def get_files_from_db(current_user: UserInfo = Depends(get_current_user)):
     return {"count": len(files_info), "files": sorted(files_info, key=lambda x: x["name"])}
 
 
+@app.delete("/file")
+def delete_file_single(name: str = Query(...), current_user: UserInfo = Depends(get_current_user)):
+    """단일 파일 삭제 (벡터 DB + 실제 파일)."""
+    source_name = normalize_source_name(name)
+    user_data_dir = DATA_DIR / current_user.id
+    target_path = user_data_dir / source_name
+
+    deleted_chunks = delete_source(source_name, user_id=current_user.id)
+    if target_path.exists():
+        target_path.unlink()
+    elif deleted_chunks == 0:
+        raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다.")
+
+    clear_caches()
+    return {"file": source_name, "deleted_chunks": deleted_chunks}
+
+
 @app.delete("/files/batch")
 def delete_files_batch(names: list[str] = Query(...), current_user: UserInfo = Depends(get_current_user)):
     results = []
@@ -739,6 +935,30 @@ def delete_files_batch(names: list[str] = Query(...), current_user: UserInfo = D
 
     clear_caches()
     return {"results": results}
+
+
+@app.post("/files/reindex")
+async def reindex_file(name: str = Query(...), current_user: UserInfo = Depends(get_current_user)):
+    """기존 파일을 다시 인덱싱합니다 (내용 변경 없이 청크 재생성)."""
+    source_name = normalize_source_name(name)
+    user_data_dir = DATA_DIR / current_user.id
+    target_path = user_data_dir / source_name
+
+    if not target_path.exists():
+        raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다.")
+
+    try:
+        text = read_document(target_path)
+        if not text.strip():
+            raise HTTPException(status_code=400, detail="파일에서 텍스트를 추출할 수 없습니다.")
+        chunks = index_document(source_name, text, user_id=current_user.id)
+        clear_caches()
+        return {"file": source_name, "chunks": chunks, "message": "재인덱싱이 완료되었습니다."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Reindex error for {name}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 class FileTagsUpdate(BaseModel):

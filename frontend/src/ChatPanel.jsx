@@ -65,6 +65,7 @@ export default function ChatPanel({
             onViewDoc={(title, content, chunkIndex) => setDocSidebar({ isOpen: true, title, content, highlightChunkIndex: chunkIndex })}
             isLastAssistant={idx === messages.length - 1 && message.role === "assistant"}
             isLastUser={idx === realLastUserIndex}
+            onSuggestionClick={(suggestion) => sendMessage(suggestion)}
           />
         ))}
         <div ref={chatEndRef} />

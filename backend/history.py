@@ -214,6 +214,17 @@ def delete_session(session_id: str, user_id: str = ""):
         conn.commit()
 
 
+def delete_user_history(user_id: str) -> None:
+    with sqlite3.connect(HISTORY_DB_PATH) as conn:
+        conn.execute(
+            "DELETE FROM messages WHERE session_id IN (SELECT id FROM sessions WHERE user_id = ?)",
+            (user_id,),
+        )
+        conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM workspaces WHERE user_id = ?", (user_id,))
+        conn.commit()
+
+
 def update_session_title(session_id: str, title: str, user_id: str = ""):
     with sqlite3.connect(HISTORY_DB_PATH) as conn:
         if user_id:

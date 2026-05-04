@@ -7,7 +7,7 @@ const formatScore = (score) => {
   return Number(score).toFixed(4);
 };
 
-export default function MessageCard({ message, isStreaming, onFeedback, onRegenerate, isLastAssistant, isLastUser, onRetry, onViewDoc }) {
+export default function MessageCard({ message, isStreaming, onFeedback, onRegenerate, isLastAssistant, isLastUser, onRetry, onViewDoc, onSuggestionClick }) {
   const [copied, setCopied] = useState(false);
   const [sourceExpanded, setSourceExpanded] = useState(null);
   const isUser = message.role === "user";
@@ -110,6 +110,28 @@ export default function MessageCard({ message, isStreaming, onFeedback, onRegene
                   onClick={(e) => { e.stopPropagation(); onViewDoc(src.source, src.full_text || src.preview, src.chunk_index); }}
                 >전체보기</button>
               </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 후속 질문 추천 칩 */}
+      {!isUser && !isStreaming && message.suggestions?.length > 0 && onSuggestionClick && (
+        <div className="suggestion-chips" role="group" aria-label="후속 질문 추천">
+          <span className="suggestion-label">이어서 물어보기</span>
+          <div className="suggestion-list">
+            {message.suggestions.map((s, i) => (
+              <button
+                key={i}
+                className="suggestion-chip"
+                onClick={() => onSuggestionClick(s)}
+                title={s}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 5, flexShrink: 0 }}>
+                  <circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>
+                </svg>
+                {s}
+              </button>
             ))}
           </div>
         </div>

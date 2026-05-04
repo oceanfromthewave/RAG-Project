@@ -7,7 +7,7 @@ import ollama
 
 from backend.store import CHAT_MODEL_NAME, get_collection, get_embed_model, get_reranker
 
-RELEVANCE_THRESHOLD = 0.6
+RELEVANCE_THRESHOLD = 0.45
 NO_CONTEXT_ANSWER = "인덱싱된 문서에서 관련 내용을 찾지 못했습니다. 질문이 문서와 관련이 없거나 더 구체적인 정보가 필요할 수 있습니다."
 SYSTEM_MESSAGE = (
     "You are a helpful internal document assistant. "
@@ -72,6 +72,10 @@ def should_retrieve(query: str) -> bool:
     text = query.strip().lower()
     if len(text) < 2:
         return False
+    # 한글이 포함된 쿼리는 무조건 문서 검색 시도
+    # (인사말은 is_greeting에서 먼저 걸러지므로 여기선 검색 허용)
+    if re.search(r'[가-힣]', text):
+        return True
     keywords = [
         "뭐", "무엇", "왜", "어떻게", "설명", "알려", "차이",
         "방법", "이유", "가능", "언제", "어디",
@@ -221,8 +225,12 @@ def retrieve_context(
     elif len(conditions) > 1:
         where_filter = {"$and": conditions}
 
-    if collection.count() == 0:
+    total_docs = collection.count()
+    if total_docs == 0:
         return {"hits": [], "max_score": 0.0}
+
+    # ChromaDB는 n_results가 컬렉션 크기보다 크면 오류를 던지므로 반드시 상한 설정
+    n_results = min(15 if selected_sources else 7, total_docs)
 
     keywords = [k.lower() for k in re.findall(r'[가-힣a-zA-Z0-9]{2,}', query)]
     candidates = {}
@@ -233,7 +241,7 @@ def retrieve_context(
     for current_query in search_queries:
         results = collection.query(
             query_embeddings=[get_embedding(current_query)],
-            n_results=15 if selected_sources else 7,
+            n_results=n_results,
             where=where_filter,
             include=["documents", "metadatas"],
         )

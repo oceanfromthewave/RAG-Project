@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from functools import lru_cache
 from hashlib import sha1
@@ -16,6 +17,10 @@ DB_DIR = BASE_DIR / "db"
 EMBED_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 RERANK_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 CHAT_MODEL_NAME = "mistral"
+MAX_SOURCE_NAME_LENGTH = int(os.getenv("MAX_SOURCE_NAME_LENGTH", "128"))
+MAX_EXTRACTED_CHARS = int(os.getenv("MAX_EXTRACTED_CHARS", "500000"))
+MAX_PDF_PAGES = int(os.getenv("MAX_PDF_PAGES", "100"))
+MAX_CHUNKS_PER_DOCUMENT = int(os.getenv("MAX_CHUNKS_PER_DOCUMENT", "1000"))
 ALLOWED_SUFFIXES = {
     ".txt", ".pdf", ".docx", ".py", ".js", ".ts", ".jsx", ".tsx",
     ".html", ".css", ".json", ".md", ".java", ".c", ".cpp", ".h", ".go",
@@ -76,6 +81,10 @@ def get_reranker():
 def normalize_source_name(filename: str) -> str:
     cleaned = Path(filename).name.strip()
     suffix = Path(cleaned).suffix.lower()
+    if len(cleaned) > MAX_SOURCE_NAME_LENGTH:
+        raise ValueError("File name is too long.")
+    if any(ord(ch) < 32 for ch in cleaned):
+        raise ValueError("File name contains invalid control characters.")
 
     if not cleaned or cleaned in {".", ".."}:
         raise ValueError("유효한 파일명이 아닙니다.")
@@ -89,24 +98,30 @@ def normalize_source_name(filename: str) -> str:
     return cleaned
 
 
+def limit_extracted_text(text: str) -> str:
+    return text[:MAX_EXTRACTED_CHARS]
+
+
 def read_txt(path: Path) -> str:
     try:
-        return path.read_text(encoding="utf-8")
+        return limit_extracted_text(path.read_text(encoding="utf-8"))
     except UnicodeDecodeError:
         try:
-            return path.read_text(encoding="cp949")
+            return limit_extracted_text(path.read_text(encoding="cp949"))
         except UnicodeDecodeError:
-            return path.read_text(encoding="latin-1")
+            return limit_extracted_text(path.read_text(encoding="latin-1"))
 
 
 def read_pdf(path: Path) -> str:
     reader = PdfReader(str(path))
-    return "".join(page.extract_text() or "" for page in reader.pages)
+    if len(reader.pages) > MAX_PDF_PAGES:
+        raise ValueError(f"PDF has too many pages. Maximum allowed is {MAX_PDF_PAGES}.")
+    return limit_extracted_text("".join(page.extract_text() or "" for page in reader.pages))
 
 
 def read_docx(path: Path) -> str:
     doc = DocxDocument(str(path))
-    return "\n".join(paragraph.text for paragraph in doc.paragraphs if paragraph.text.strip())
+    return limit_extracted_text("\n".join(paragraph.text for paragraph in doc.paragraphs if paragraph.text.strip()))
 
 
 def read_image(path: Path) -> str:
@@ -123,7 +138,7 @@ def read_image(path: Path) -> str:
             images=[image_bytes],
             stream=False
         )
-        return response.get("response", "").strip()
+        return limit_extracted_text(response.get("response", "").strip())
     except Exception as e:
         print(f"Image processing error: {e}")
         return f"[이미지 분석 실패: {path.name}]"
@@ -148,45 +163,67 @@ def read_document(path: Path) -> str:
 
 
 def chunk_text(text: str, size: int = 600, overlap: int = 120) -> list[str]:
-    """텍스트를 의미 있는 단위(단락, 문장)로 최대한 보존하며 분할한다."""
+    """텍스트를 의미 있는 단위(단락, 문장)로 최대한 보존하며 분할한다.
+    한국어 문장 경계(다/요/죠/습니다 등)를 추가로 인식한다.
+    """
     if not text.strip():
         return []
 
     # 1. 단락 단위로 먼저 분할
     paragraphs = re.split(r'\n\s*\n', text)
-    
+
+    # 2. 한국어 + 영어 문장 분리 정규식
+    #    - 영어: .!? 뒤 공백
+    #    - 한국어: 다/요/죠/음/함/니다 뒤 . 또는 공백
+    _KR_SENT_RE = re.compile(
+        r'(?<=[.!?\uFF0E])\s+'
+        r'|(?<=\ub2e4[.])\s+'
+        r'|(?<=\uc694[.])\s+'
+        r'|(?<=\uc8fc[.])\s+'
+        r'|(?<=\ub2e4)\n'
+        r'|(?<=\uc694)\n'
+    )
+
     chunks = []
     current_chunk = ""
 
     for p in paragraphs:
         p = p.strip()
-        if not p: continue
+        if not p:
+            continue
 
         # 단락이 너무 크면 문장 단위로 쪼개기
         if len(p) > size:
-            # 문장 분리 시도 (단순 정규식)
-            sentences = re.split(r'(?<=[.!?])\s+', p)
+            sentences = _KR_SENT_RE.split(p)
+            # 너무 짧게 쪼개진 조각은 앞 문장과 병합
+            merged: list[str] = []
+            buf = ""
             for s in sentences:
+                s = s.strip()
+                if not s:
+                    continue
+                if buf and len(buf) + len(s) < size // 3:
+                    buf = buf + " " + s
+                else:
+                    if buf:
+                        merged.append(buf)
+                    buf = s
+            if buf:
+                merged.append(buf)
+
+            for s in merged:
                 if len(current_chunk) + len(s) > size:
                     if current_chunk:
                         chunks.append(current_chunk.strip())
-                    
-                    # 겹침(overlap) 처리
-                    if len(current_chunk) > overlap:
-                        current_chunk = current_chunk[-overlap:] + " " + s
-                    else:
-                        current_chunk = s
+                    # 오버랩 처리
+                    current_chunk = (current_chunk[-overlap:] + " " + s) if len(current_chunk) > overlap else s
                 else:
                     current_chunk = (current_chunk + " " + s).strip()
         else:
             if len(current_chunk) + len(p) > size:
                 if current_chunk:
                     chunks.append(current_chunk.strip())
-                
-                if len(current_chunk) > overlap:
-                    current_chunk = current_chunk[-overlap:] + " " + p
-                else:
-                    current_chunk = p
+                current_chunk = (current_chunk[-overlap:] + " " + p) if len(current_chunk) > overlap else p
             else:
                 current_chunk = (current_chunk + "\n\n" + p).strip()
 
@@ -194,7 +231,7 @@ def chunk_text(text: str, size: int = 600, overlap: int = 120) -> list[str]:
         chunks.append(current_chunk.strip())
 
     # 너무 짧은 청크 필터링 (의미 없는 조각 제거)
-    return [c for c in chunks if len(c) >= 40]
+    return [c for c in chunks if len(c) >= 40][:MAX_CHUNKS_PER_DOCUMENT]
 
 
 def build_chunk_id(source: str, chunk_index: int, chunk: str) -> str:
