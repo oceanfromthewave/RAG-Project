@@ -248,7 +248,7 @@ export default function SidePanel({
         <div className="model-info" aria-label="모델 정보">
           <p className="model-info-label">AI 모델 설정</p>
           <div className="model-row">
-            <span className="model-row-label">Chat</span>
+            <span className="model-row-label">대화</span>
             <div className="custom-dropdown" ref={dropdownRef}>
               <button
                 type="button"
@@ -283,12 +283,12 @@ export default function SidePanel({
           </div>
           <div className="model-divider" aria-hidden="true" />
           <div className="model-row">
-            <span className="model-row-label">Rerank</span>
+            <span className="model-row-label">재순위</span>
             <span className="model-row-val">{stats.reranker_model}</span>
           </div>
           <div className="model-divider" aria-hidden="true" />
           <div className="model-row">
-            <span className="model-row-label">Embed</span>
+            <span className="model-row-label">임베딩</span>
             <span className="model-row-val">{stats.embed_model}</span>
           </div>
         </div>

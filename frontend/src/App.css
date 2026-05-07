@@ -938,6 +938,54 @@
   transform: translateY(-1px);
 }
 
+.modal-input {
+  width: 100%;
+  margin-top: 4px;
+  margin-bottom: 24px;
+  padding: 11px 14px;
+  font-size: 0.9rem;
+  color: var(--text);
+  background: var(--surface-inset);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  outline: none;
+  transition: border-color var(--tr-base), box-shadow var(--tr-base);
+  box-sizing: border-box;
+  font-family: inherit;
+}
+
+.modal-input::placeholder {
+  color: var(--text-dim);
+}
+
+.modal-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-lighter);
+}
+
+.btn-primary-modal {
+  padding: 8px 18px;
+  border-radius: var(--r-md);
+  background: var(--accent);
+  color: white;
+  font-size: 0.85rem;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  transition: all var(--tr-base);
+}
+
+.btn-primary-modal:hover:not(:disabled) {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.btn-primary-modal:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 @keyframes fadeIn {
   from { opacity: 0; }
   to { opacity: 1; }

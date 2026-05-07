@@ -1,4 +1,5 @@
 import { useState } from "react";
+import PromptModal from "./PromptModal";
 
 /* ── 날짜 그룹 레이블 ──────────────────────────────────────── */
 function dateGroup(dateStr) {
@@ -59,6 +60,7 @@ export default function HistorySidebar({
   togglePinSession,
 }) {
   const [isWsOpen, setIsWsOpen] = useState(false);
+  const [isWsModalOpen, setIsWsModalOpen] = useState(false);
   const [hoveredSession, setHoveredSession] = useState(null);
 
   const isSearchMode = sessionSearchResults !== null;
@@ -82,16 +84,27 @@ export default function HistorySidebar({
 
   return (
     <nav className="history-sidebar" aria-label="대화 기록">
+      <PromptModal
+        isOpen={isWsModalOpen}
+        title="새 워크스페이스 만들기"
+        message="이 워크스페이스에서 사용할 이름을 입력해 주세요."
+        placeholder="예: 회사 자료, 논문 정리..."
+        confirmText="만들기"
+        maxLength={40}
+        onConfirm={(name) => {
+          handleCreateWorkspace(name);
+          setIsWsModalOpen(false);
+        }}
+        onCancel={() => setIsWsModalOpen(false)}
+      />
+
       {/* ── 워크스페이스 선택기 ── */}
       <div className="workspace-selector">
         <div className="ws-header">
           <label>워크스페이스</label>
           <button
             className="btn-ws-add"
-            onClick={() => {
-              const name = prompt("새 워크스페이스 이름을 입력하세요:");
-              if (name) handleCreateWorkspace(name);
-            }}
+            onClick={() => setIsWsModalOpen(true)}
             title="새 워크스페이스 추가"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">

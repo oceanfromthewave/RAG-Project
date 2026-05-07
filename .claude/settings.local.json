@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls C:/dev/rag-project/.env*)",
+      "Bash(claude mcp:*)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('backend/security.py', encoding='utf-8'\\).read\\(\\)\\); print\\('security.py OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('backend/main.py', encoding='utf-8'\\).read\\(\\)\\); print\\('main.py OK'\\)\")",
+      "Bash(npx -y eslint src/App.jsx src/ChatComponents.jsx src/useRag.js)",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)",
+      "Bash(git push:*)",
+      "Bash(npm install:*)",
+      "mcp__sequential-thinking__sequentialthinking"
+    ]
+  }
+}

@@ -345,7 +345,7 @@ export function useRag(authFetch, user, logout) {
       const data = await readJson(response);
       setWorkspaces((prev) => [data, ...prev]);
       setCurrentWorkspaceId(data.id);
-      addToast(`Workspace "${name}" created.`, "success");
+      addToast(`"${name}" 워크스페이스가 생성되었습니다.`, "success");
     } catch (err) {
       addToast(err.message, "error");
     }
@@ -355,8 +355,8 @@ export function useRag(authFetch, user, logout) {
     const workspace = workspaces.find((item) => item.id === id);
     setConfirmData({
       isOpen: true,
-      title: "Delete workspace",
-      message: `Delete "${workspace?.name || "workspace"}" and its sessions?`,
+      title: "워크스페이스 삭제",
+      message: `"${workspace?.name || "워크스페이스"}"와 포함된 모든 대화를 삭제할까요?`,
       onConfirm: async () => {
         setConfirmData((prev) => ({ ...prev, isOpen: false }));
         try {
@@ -367,7 +367,7 @@ export function useRag(authFetch, user, logout) {
           if (currentWorkspaceId === id) {
             setCurrentWorkspaceId(null);
           }
-          addToast("Workspace deleted.", "success");
+          addToast("워크스페이스가 삭제되었습니다.", "success");
         } catch (err) {
           addToast(err.message, "error");
         }
@@ -1029,7 +1029,7 @@ export function useRag(authFetch, user, logout) {
     link.download = `chat-export-${new Date().toISOString().slice(0, 10)}.${extension}`;
     link.click();
     URL.revokeObjectURL(url);
-    addToast(`Exported as ${format.toUpperCase()}.`, "success");
+    addToast(`${format.toUpperCase()} 형식으로 내보냈습니다.`, "success");
   };
 
   const handleLogout = () => {
@@ -1056,7 +1056,7 @@ export function useRag(authFetch, user, logout) {
         body: JSON.stringify({ tags }),
       });
       await refreshSidebar();
-      addToast(`Updated tags for "${name}".`, "success");
+      addToast(`"${name}"의 태그를 업데이트했습니다.`, "success");
     } catch (err) {
       addToast(err.message, "error");
     }
