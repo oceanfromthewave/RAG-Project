@@ -1,4 +1,4 @@
-import { Suspense } from "react";
+import { Suspense, useEffect, useState, useCallback } from "react";
 import { Toaster } from "react-hot-toast";
 import "./App.css";
 import { useAuth } from "./AuthContext";
@@ -8,7 +8,7 @@ import Workspace from "./Workspace";
 import TopBar from "./TopBar";
 import ConfirmModal from "./ConfirmModal";
 import { ToastRegion } from "./Toast";
-import { DocViewerModal } from "./ChatComponents";
+import { DocViewerModal, ShortcutsModal } from "./ChatComponents";
 
 function App() {
   const { token, user, logout, authFetch } = useAuth();
@@ -18,6 +18,19 @@ function App() {
 
 function AuthenticatedApp({ authFetch, user, logout }) {
   const rag = useRag(authFetch, user, logout);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+
+  const handleGlobalKeys = useCallback((e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "/") {
+      e.preventDefault();
+      setShowShortcuts((prev) => !prev);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener("keydown", handleGlobalKeys);
+    return () => window.removeEventListener("keydown", handleGlobalKeys);
+  }, [handleGlobalKeys]);
 
   return (
     <div className={`app-shell${rag.darkMode ? " dark" : ""}`}>
@@ -30,6 +43,11 @@ function AuthenticatedApp({ authFetch, user, logout }) {
         message={rag.confirmData.message}
         onConfirm={rag.confirmData.onConfirm}
         onCancel={() => rag.setConfirmData(prev => ({ ...prev, isOpen: false }))}
+      />
+
+      <ShortcutsModal
+        isOpen={showShortcuts}
+        onClose={() => setShowShortcuts(false)}
       />
 
       {/* 모바일 대응 오버레이 */}
@@ -62,9 +80,23 @@ function AuthenticatedApp({ authFetch, user, logout }) {
         handleLogout={rag.handleLogout}
       />
 
-      <Suspense fallback={<div className="loading-overlay">컴포넌트 로드 중...</div>}>
+      <Suspense fallback={<LoadingScreen />}>
         <Workspace rag={rag} />
       </Suspense>
+    </div>
+  );
+}
+
+function LoadingScreen() {
+  return (
+    <div className="loading-screen">
+      <div className="loading-content">
+        <div className="loading-logo">
+          <img src="/favicon.png" alt="RAG Logo" />
+        </div>
+        <div className="loading-spinner"></div>
+        <p>애플리케이션을 준비하는 중...</p>
+      </div>
     </div>
   );
 }

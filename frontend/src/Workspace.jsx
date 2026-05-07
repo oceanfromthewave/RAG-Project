@@ -7,7 +7,7 @@ import { DocSidebar } from "./ChatComponents";
 import { QUICK_PROMPTS, TEXT } from "./constants";
 
 export default function Workspace({ rag }) {
-  const { 
+  const {
     view, setView, sidebarOpen, docSidebar, setDocSidebar, stats,
     sessions, sessionFilter, setSessionFilter, currentSessionId, loadSession,
     sessionSearchResults, sessionSearchLoading, handleSessionSearch,
@@ -23,7 +23,8 @@ export default function Workspace({ rag }) {
     reindexFile, reindexingFile,
     dropdownRef, isModelDropdownOpen, setIsModelDropdownOpen, selectedModel,
     setSelectedModel, availableModels, updateFileTags,
-    workspaces, currentWorkspaceId, setCurrentWorkspaceId, handleCreateWorkspace, handleDeleteWorkspace
+    workspaces, currentWorkspaceId, setCurrentWorkspaceId, handleCreateWorkspace, handleDeleteWorkspace,
+    pinnedSessions, togglePinSession,
   } = rag;
 
   if (view === "admin") {
@@ -42,11 +43,11 @@ export default function Workspace({ rag }) {
     );
   }
 
-  const libraryDensity = stats.indexed_files > 0
-    ? `${Math.max(1, Math.round(stats.total_chunks / stats.indexed_files))}청크/문서`
-    : "비어 있음";
+  const libraryDensity =
+    stats.indexed_files > 0
+      ? `${Math.max(1, Math.round(stats.total_chunks / stats.indexed_files))}청크/문서`
+      : "비어 있음";
 
-  // 파일 필터 + 정렬
   const SORT_FNS = {
     name:   (a, b) => a.name.localeCompare(b.name),
     size:   (a, b) => b.size - a.size,
@@ -54,11 +55,20 @@ export default function Workspace({ rag }) {
     chunks: (a, b) => (b.chunks || 0) - (a.chunks || 0),
   };
   const filteredFiles = files
-    .filter(f => f.name.toLowerCase().includes(fileFilter.trim().toLowerCase()))
+    .filter((f) => f.name.toLowerCase().includes(fileFilter.trim().toLowerCase()))
     .sort(SORT_FNS[fileSortKey] || SORT_FNS.name);
 
+  // 현재 활성 세션 객체
+  const currentSession = currentSessionId
+    ? sessions.find((s) => s.id === currentSessionId) || null
+    : null;
+
   return (
-    <main className={`workspace ${!sidebarOpen ? "collapsed" : ""} ${docSidebar.isOpen ? "show-doc" : ""}`}>
+    <main
+      className={`workspace ${!sidebarOpen ? "collapsed" : ""} ${
+        docSidebar.isOpen ? "show-doc" : ""
+      }`}
+    >
       <HistorySidebar
         workspaces={workspaces}
         currentWorkspaceId={currentWorkspaceId}
@@ -81,7 +91,9 @@ export default function Workspace({ rag }) {
         startEditSession={startEditSession}
         deleteChatSession={deleteChatSession}
         handleResetChat={handleResetChat}
-        activeStreamIds={activeStreamIds}
+        activeStreams={activeStreamIds}
+        pinnedSessions={pinnedSessions}
+        togglePinSession={togglePinSession}
       />
 
       <ChatPanel
@@ -110,6 +122,8 @@ export default function Workspace({ rag }) {
         handleExportChat={handleExportChat}
         handleResetChat={handleResetChat}
         handleScroll={handleScroll}
+        currentSession={currentSession}
+        files={files}
       />
 
       <SidePanel

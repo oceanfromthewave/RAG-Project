@@ -78,3 +78,44 @@ export function TypingDots() {
     </span>
   );
 }
+
+const SHORTCUTS = [
+  { keys: ["Ctrl", "N"], desc: "새 채팅 시작" },
+  { keys: ["Alt", "N"], desc: "새 채팅 시작 (대체)" },
+  { keys: ["Enter"], desc: "메시지 보내기" },
+  { keys: ["Shift", "Enter"], desc: "줄바꿈" },
+  { keys: ["Esc"], desc: "모달/팝업 닫기" },
+  { keys: ["Ctrl", "/"], desc: "단축키 도움말" },
+];
+
+export function ShortcutsModal({ isOpen, onClose }) {
+  if (!isOpen) return null;
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-container shortcuts-modal" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <h3>키보드 단축키</h3>
+          <button className="modal-close" onClick={onClose}>✕</button>
+        </div>
+        <div className="shortcuts-grid">
+          {SHORTCUTS.map((s, i) => (
+            <div key={i} className="shortcut-row">
+              <span className="shortcut-desc">{s.desc}</span>
+              <span className="shortcut-keys">
+                {s.keys.map((k, j) => (
+                  <span key={j}>
+                    <kbd className="kbd">{k}</kbd>
+                    {j < s.keys.length - 1 && <span style={{ margin: "0 2px", color: "var(--text-dim)", fontSize: "0.7rem" }}>+</span>}
+                  </span>
+                ))}
+              </span>
+            </div>
+          ))}
+        </div>
+        <div className="modal-footer" style={{ marginTop: 16 }}>
+          <button type="button" className="btn-secondary" onClick={onClose}>닫기</button>
+        </div>
+      </div>
+    </div>
+  );
+}

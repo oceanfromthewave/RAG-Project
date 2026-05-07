@@ -75,6 +75,24 @@ export function useRag(authFetch, user, logout) {
   const [editingTitle, setEditingTitle] = useState("");
   const [reindexingFile, setReindexingFile] = useState(null);
   const [activeStreamIds, setActiveStreamIds] = useState([]);
+  const [pinnedSessions, setPinnedSessions] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`pinned_sessions_${user?.id || "anon"}`);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem(`pinned_sessions_${user?.id || "anon"}`, JSON.stringify(pinnedSessions));
+  }, [pinnedSessions, user?.id]);
+
+  const togglePinSession = useCallback((sessionId) => {
+    setPinnedSessions(prev => 
+      prev.includes(sessionId) ? prev.filter(id => id !== sessionId) : [...prev, sessionId]
+    );
+  }, []);
 
   const chatEndRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -497,6 +515,7 @@ export function useRag(authFetch, user, logout) {
     }
 
     const currentAttachments = [...attachedFiles];
+    const isNewSession = !currentSessionId;
     const controller = new AbortController();
     const userId = nextId();
     const assistantId = nextId();
@@ -648,6 +667,27 @@ export function useRag(authFetch, user, logout) {
 
         return prevCurrent;
       });
+
+      // 새 세션이면 제목 자동 생성 완료를 폴링
+      if (isNewSession && actualSessionId) {
+        const pollTitle = async (sid, attempt = 0) => {
+          if (attempt >= 5) return;
+          await new Promise((r) => setTimeout(r, 2000 + attempt * 1000));
+          try {
+            const res = await authFetch(`${API_BASE_URL}/sessions/${sid}/title`);
+            if (!res.ok) return;
+            const data = await res.json();
+            if (data.title && !data.title.endsWith("...")) {
+              setSessions((prev) =>
+                prev.map((s) => (s.id === sid ? { ...s, title: data.title } : s))
+              );
+              return;
+            }
+          } catch { /* ignore */ }
+          await pollTitle(sid, attempt + 1);
+        };
+        void pollTitle(actualSessionId);
+      }
     } catch (err) {
       if (err.name === "AbortError") {
         return;
@@ -1102,5 +1142,7 @@ export function useRag(authFetch, user, logout) {
     handleDeleteWorkspace,
     reindexFile,
     handleSessionSearch,
+    pinnedSessions,
+    togglePinSession,
   };
 }

@@ -52,6 +52,19 @@ def init_db():
             )
         """)
 
+        # ── [신규] 문서 요약 인덱스 ──────────────────────────────
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS document_summaries (
+                id         TEXT PRIMARY KEY,
+                user_id    TEXT NOT NULL,
+                source     TEXT NOT NULL,
+                summary    TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(user_id, source)
+            )
+        """)
+
         # 기존 DB 마이그레이션
         existing_sessions_cols = {row[1] for row in cursor.execute("PRAGMA table_info(sessions)")}
         if "user_id" not in existing_sessions_cols:
@@ -188,7 +201,7 @@ def add_message(
 ):
     message_id  = str(uuid4())
     now         = datetime.now().isoformat()
-    sources_json = json.dumps(sources) if sources else None
+    sources_json = json.dumps(sources, ensure_ascii=False) if sources else None
 
     with sqlite3.connect(HISTORY_DB_PATH) as conn:
         conn.execute(
@@ -222,6 +235,7 @@ def delete_user_history(user_id: str) -> None:
         )
         conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM workspaces WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM document_summaries WHERE user_id = ?", (user_id,))
         conn.commit()
 
 
@@ -251,6 +265,45 @@ def update_message_feedback(message_id: str, feedback: int, user_id: str = ""):
             cursor = conn.execute("UPDATE messages SET feedback = ? WHERE id = ?", (feedback, message_id))
         conn.commit()
         return cursor.rowcount > 0
+
+
+# ── [신규] Document Summaries ─────────────────────────────
+
+def get_document_summary(source: str, user_id: str) -> str | None:
+    """저장된 문서 요약을 조회한다. 없으면 None 반환."""
+    with sqlite3.connect(HISTORY_DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT summary FROM document_summaries WHERE user_id = ? AND source = ?",
+            (user_id, source),
+        ).fetchone()
+        return row[0] if row else None
+
+
+def upsert_document_summary(source: str, user_id: str, summary: str) -> None:
+    """문서 요약을 저장하거나 갱신한다."""
+    now = datetime.now().isoformat()
+    with sqlite3.connect(HISTORY_DB_PATH) as conn:
+        conn.execute(
+            """
+            INSERT INTO document_summaries (id, user_id, source, summary, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, source) DO UPDATE SET
+                summary    = excluded.summary,
+                updated_at = excluded.updated_at
+            """,
+            (str(uuid4()), user_id, source, summary, now, now),
+        )
+        conn.commit()
+
+
+def delete_document_summary(source: str, user_id: str) -> None:
+    """문서 삭제 시 저장된 요약도 함께 삭제한다."""
+    with sqlite3.connect(HISTORY_DB_PATH) as conn:
+        conn.execute(
+            "DELETE FROM document_summaries WHERE user_id = ? AND source = ?",
+            (user_id, source),
+        )
+        conn.commit()
 
 
 # 모듈 import 시 DB 초기화

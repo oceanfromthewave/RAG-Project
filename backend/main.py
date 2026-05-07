@@ -5,6 +5,7 @@ import json
 import shutil
 import logging
 import re
+import threading
 from pathlib import Path
 from uuid import uuid4
 from datetime import datetime
@@ -52,6 +53,9 @@ from backend.history import (
     create_workspace,
     get_workspaces,
     delete_workspace,
+    # ── [신규] 문서 요약 관련 ──
+    delete_document_summary,
+    upsert_document_summary,
 )
 from backend.rag import (
     NO_CONTEXT_ANSWER,
@@ -61,7 +65,12 @@ from backend.rag import (
     ask_rag_stream,
     clear_caches,
     generate_session_title,
+    generate_document_summary,   # [신규]
     should_retrieve,
+    query_cache,
+    rewrite_cache,
+    embedding_cache,
+    retrieval_cache,
 )
 from backend.store import (
     CHAT_MODEL_NAME,
@@ -244,6 +253,17 @@ def sanitize_selected_sources(selected_files: list[str], user_id: str) -> list[s
     return normalized
 
 
+def _run_summary_bg(source_name: str, text: str, user_id: str, model: str | None):
+    """백그라운드 스레드에서 문서 요약 생성 후 DB에 저장한다."""
+    try:
+        summary = generate_document_summary(text, source_name, model=model)
+        if summary:
+            upsert_document_summary(source_name, user_id, summary)
+            logger.info(f"[Summary] '{source_name}' 요약 저장 완료 ({len(summary)}자)")
+    except Exception as e:
+        logger.warning(f"[Summary] '{source_name}' 요약 생성 실패: {e}")
+
+
 # ── 기본 엔드포인트 ────────────────────────────────────────
 
 @app.get("/")
@@ -256,7 +276,6 @@ def health_check():
     """ollama 연결 및 ChromaDB 상태를 확인하는 헬스체크 엔드포인트."""
     checks: dict[str, str] = {}
 
-    # ollama 연결 확인
     try:
         models_info = ollama.list()
         if isinstance(models_info, dict):
@@ -267,14 +286,12 @@ def health_check():
     except Exception as e:
         checks["ollama"] = f"error: {e}"
 
-    # ChromaDB 연결 확인
     try:
         total = get_collection().count()
         checks["chromadb"] = f"ok ({total} chunks)"
     except Exception as e:
         checks["chromadb"] = f"error: {e}"
 
-    # SQLite 히스토리 DB 확인
     try:
         from backend.history import HISTORY_DB_PATH
         import sqlite3
@@ -317,7 +334,6 @@ def get_stats(current_user: UserInfo = Depends(get_current_user)):
 
 @app.get("/models")
 def list_models(current_user: UserInfo = Depends(get_current_user)):
-    """사용 가능한 ollama 모델 목록 반환 (dict / Pydantic 모두 지원)."""
     try:
         models_info = ollama.list()
         if isinstance(models_info, dict):
@@ -411,10 +427,7 @@ def list_all_users(admin: UserInfo = Depends(get_current_admin)):
 
 
 @app.get("/admin/users/{user_id}/role")
-def get_user_role(
-    user_id: str,
-    admin: UserInfo = Depends(get_current_admin),
-):
+def get_user_role(user_id: str, admin: UserInfo = Depends(get_current_admin)):
     user = get_user_by_id(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
@@ -422,11 +435,7 @@ def get_user_role(
 
 
 @app.patch("/admin/users/{user_id}/role")
-def change_user_role(
-    user_id: str,
-    body: RoleUpdate,
-    admin: UserInfo = Depends(get_current_admin),
-):
+def change_user_role(user_id: str, body: RoleUpdate, admin: UserInfo = Depends(get_current_admin)):
     if user_id == admin.id:
         raise HTTPException(status_code=400, detail="자기 자신의 권한은 변경할 수 없습니다.")
     success = update_user_role(user_id, body.is_admin)
@@ -439,34 +448,24 @@ def change_user_role(
 def get_global_stats(admin: UserInfo = Depends(get_current_admin)):
     collection = get_collection()
     total_docs = collection.count()
-
     import sqlite3
     from backend.auth import USERS_DB_PATH
     with sqlite3.connect(USERS_DB_PATH) as conn:
         user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-
-    return {
-        "total_users": user_count,
-        "total_chunks_in_db": total_docs,
-        "server_status": "healthy"
-    }
+    return {"total_users": user_count, "total_chunks_in_db": total_docs, "server_status": "healthy"}
 
 
 @app.delete("/admin/users/{user_id}")
 def delete_user_account(user_id: str, admin: UserInfo = Depends(get_current_admin)):
     if user_id == admin.id:
         raise HTTPException(status_code=400, detail="자기 자신은 삭제할 수 없습니다.")
-
     for source in list_indexed_sources(user_id=user_id):
         delete_source(source, user_id=user_id)
-
     user_data_dir = DATA_DIR / user_id
     if user_data_dir.exists():
         shutil.rmtree(user_data_dir)
-
-    delete_user_history(user_id)
+    delete_user_history(user_id)  # document_summaries도 함께 삭제됨
     clear_caches()
-
     import sqlite3
     from backend.auth import USERS_DB_PATH
     with sqlite3.connect(USERS_DB_PATH) as conn:
@@ -474,8 +473,18 @@ def delete_user_account(user_id: str, admin: UserInfo = Depends(get_current_admi
         conn.commit()
         if cursor.rowcount == 0:
             raise HTTPException(status_code=404, detail="존재하지 않는 사용자입니다.")
-
     return {"message": "사용자가 삭제되었습니다."}
+
+
+@app.get("/admin/cache-stats")
+def get_cache_stats(admin: UserInfo = Depends(get_current_admin)):
+    """LRU 캐시 크기 및 상태 모니터링."""
+    return {
+        "query_cache": len(query_cache),
+        "rewrite_cache": len(rewrite_cache),
+        "embedding_cache": len(embedding_cache),
+        "retrieval_cache": len(retrieval_cache),
+    }
 
 
 @app.get("/admin/logs")
@@ -498,7 +507,6 @@ def get_activity_logs(
 
     with sqlite3.connect(HISTORY_DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
-        
         query = """
             SELECT m.id, m.role, m.content, m.feedback, m.score, m.created_at, s.user_id, s.title as session_title
             FROM messages m
@@ -514,16 +522,13 @@ def get_activity_logs(
                 params.extend(matched_ids)
             else:
                 query += " AND s.user_id = 'none'"
-        
         if role:
             if role not in {"user", "assistant"}:
                 raise HTTPException(status_code=400, detail="Invalid role filter.")
             query += " AND m.role = ?"
             params.append(role)
-            
         query += " ORDER BY m.created_at DESC LIMIT ?"
         params.append(limit)
-        
         logs = conn.execute(query, params).fetchall()
 
     result = []
@@ -531,21 +536,15 @@ def get_activity_logs(
         d = dict(log)
         d["username"] = user_map.get(d["user_id"], "Unknown")
         result.append(d)
-
     return result
 
 
 # ── 세션 엔드포인트 ────────────────────────────────────────
 
 @app.get("/sessions/search")
-def search_sessions(
-    q: str = Query(..., min_length=1),
-    current_user: UserInfo = Depends(get_current_user)
-):
-    """메시지 내용으로 세션을 전체 검색합니다."""
+def search_sessions(q: str = Query(..., min_length=1), current_user: UserInfo = Depends(get_current_user)):
     import sqlite3
     from backend.history import HISTORY_DB_PATH
-
     keyword = f"%{q.strip()}%"
     with sqlite3.connect(HISTORY_DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
@@ -554,20 +553,14 @@ def search_sessions(
                    substr(m.content, 1, 120) AS matched_snippet
             FROM sessions s
             JOIN messages m ON m.session_id = s.id
-            WHERE s.user_id = ?
-              AND m.content LIKE ?
-            ORDER BY s.updated_at DESC
-            LIMIT 30
+            WHERE s.user_id = ? AND m.content LIKE ?
+            ORDER BY s.updated_at DESC LIMIT 30
         """, (current_user.id, keyword)).fetchall()
-
     return {"results": [dict(r) for r in rows]}
 
 
 @app.get("/sessions")
-def list_chat_sessions(
-    workspace_id: str | None = Query(None),
-    current_user: UserInfo = Depends(get_current_user)
-):
+def list_chat_sessions(workspace_id: str | None = Query(None), current_user: UserInfo = Depends(get_current_user)):
     return {"sessions": get_sessions(user_id=current_user.id, workspace_id=workspace_id)}
 
 
@@ -588,12 +581,25 @@ def remove_session(session_id: str, current_user: UserInfo = Depends(get_current
     return {"message": "Session deleted"}
 
 
+@app.get("/sessions/{session_id}/title")
+def get_session_title(session_id: str, current_user: UserInfo = Depends(get_current_user)):
+    """세션 제목만 반환 — 프론트엔드에서 자동 생성 제목 폴링용."""
+    owner = get_session_owner(session_id)
+    if owner and owner != current_user.id:
+        raise HTTPException(status_code=403, detail="이 세션에 접근할 권한이 없습니다.")
+    import sqlite3
+    from backend.history import HISTORY_DB_PATH
+    with sqlite3.connect(HISTORY_DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT title FROM sessions WHERE id = ?", (session_id,)
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
+    return {"title": row[0]}
+
+
 @app.patch("/sessions/{session_id}")
-def rename_session(
-    session_id: str,
-    update: SessionUpdate,
-    current_user: UserInfo = Depends(get_current_user),
-):
+def rename_session(session_id: str, update: SessionUpdate, current_user: UserInfo = Depends(get_current_user)):
     owner = get_session_owner(session_id)
     if owner and owner != current_user.id:
         raise HTTPException(status_code=403, detail="이 세션에 접근할 권한이 없습니다.")
@@ -602,11 +608,7 @@ def rename_session(
 
 
 @app.post("/messages/{message_id}/feedback")
-def set_message_feedback(
-    message_id: str,
-    body: FeedbackUpdate,
-    current_user: UserInfo = Depends(get_current_user),
-):
+def set_message_feedback(message_id: str, body: FeedbackUpdate, current_user: UserInfo = Depends(get_current_user)):
     from backend.history import update_message_feedback
     success = update_message_feedback(message_id, body.feedback, user_id=current_user.id)
     if not success:
@@ -626,10 +628,8 @@ def ask(request: Request, question: Question, current_user: UserInfo = Depends(g
     if not current_session_id:
         title = (question.query[:30] + "...") if len(question.query) > 30 else question.query
         current_session_id = create_session(
-            title=title, 
-            model=question.model, 
-            user_id=current_user.id,
-            workspace_id=question.workspace_id
+            title=title, model=question.model,
+            user_id=current_user.id, workspace_id=question.workspace_id
         )
     else:
         owner = get_session_owner(current_session_id)
@@ -646,10 +646,8 @@ def ask(request: Request, question: Question, current_user: UserInfo = Depends(g
         result = {"answer": _get_content(res), "context": "", "sources": [], "score": 0.0}
     else:
         result = ask_rag(
-            question.query,
-            model=question.model,
-            history=history_dicts,
-            user_id=current_user.id,
+            question.query, model=question.model,
+            history=history_dicts, user_id=current_user.id,
             selected_sources=selected_sources
         )
 
@@ -673,10 +671,8 @@ def ask_stream(request: Request, question: Question, current_user: UserInfo = De
     if not current_session_id:
         temp_title = (question.query[:30] + "...") if len(question.query) > 30 else question.query
         current_session_id = create_session(
-            title=temp_title, 
-            model=question.model, 
-            user_id=current_user.id,
-            workspace_id=question.workspace_id
+            title=temp_title, model=question.model,
+            user_id=current_user.id, workspace_id=question.workspace_id
         )
         is_new_session = True
     else:
@@ -692,14 +688,12 @@ def ask_stream(request: Request, question: Question, current_user: UserInfo = De
 
         full_answer = ""
         meta = None
-        message_saved = False  # 정상 완료 시 finally 중복 저장 방지
+        message_saved = False
 
         try:
             for event in ask_rag_stream(
-                question.query,
-                model=question.model,
-                history=history_dicts,
-                user_id=current_user.id,
+                question.query, model=question.model,
+                history=history_dicts, user_id=current_user.id,
                 selected_sources=selected_sources
             ):
                 if event["type"] == "chunk":
@@ -708,7 +702,6 @@ def ask_stream(request: Request, question: Question, current_user: UserInfo = De
                     meta = event
                 yield json.dumps(event, ensure_ascii=False) + "\n"
 
-            # ── 스트림 정상 완료: 메시지 저장 후 message_id 전송 ──
             if full_answer.strip() or meta:
                 final_content = full_answer
                 if not final_content.strip():
@@ -718,35 +711,34 @@ def ask_stream(request: Request, question: Question, current_user: UserInfo = De
                         final_content = "답변 생성 중 오류가 발생했습니다."
 
                 msg_id = add_message(
-                    current_session_id,
-                    role="assistant",
-                    content=final_content,
+                    current_session_id, role="assistant", content=final_content,
                     sources=meta.get("sources") if meta else [],
                     context=meta.get("context") if meta else "",
                     score=meta.get("score") if meta else 0.0,
                 )
                 message_saved = True
-                # 프론트엔드에 실제 DB message_id 전달 (피드백 기능에 필요)
                 yield json.dumps({"type": "message_id", "id": msg_id}, ensure_ascii=False) + "\n"
 
-                # ── 새 세션인 경우 LLM으로 제목 자동 생성 ──
                 if is_new_session and final_content.strip() and len(final_content) > 30:
-                    try:
-                        auto_title = generate_session_title(
-                            question.query, final_content, model=question.model
-                        )
-                        if auto_title:
-                            update_session_title(current_session_id, auto_title)
-                            # 제목 이벤트를 프론트로 전송해 사이드바 즐시 반영
-                            yield json.dumps({"type": "title", "title": auto_title, "session_id": current_session_id}, ensure_ascii=False) + "\n"
-                    except Exception as e:
-                        logger.warning(f"자동 제목 생성 실패: {e}")
+                    _sid = current_session_id
+                    _query = question.query
+                    _model = question.model
+                    _fc = final_content
+
+                    def _gen_title_bg():
+                        try:
+                            auto_title = generate_session_title(_query, _fc, model=_model)
+                            if auto_title:
+                                update_session_title(_sid, auto_title)
+                        except Exception as _e:
+                            logger.warning(f"자동 제목 생성 실패: {_e}")
+
+                    threading.Thread(target=_gen_title_bg, daemon=True).start()
 
         except Exception as e:
             logger.error(f"스트림 생성 오류: {e}", exc_info=True)
 
         finally:
-            # 클라이언트가 중도 취소한 경우에만 여기서 저장 (중복 방지)
             if not message_saved and (full_answer.strip() or meta):
                 final_content = full_answer
                 if not final_content.strip():
@@ -756,9 +748,7 @@ def ask_stream(request: Request, question: Question, current_user: UserInfo = De
                         final_content = "답변 생성 중 세션이 전환되어 중단되었습니다."
 
                 add_message(
-                    current_session_id,
-                    role="assistant",
-                    content=final_content,
+                    current_session_id, role="assistant", content=final_content,
                     sources=meta.get("sources") if meta else [],
                     context=meta.get("context") if meta else "",
                     score=meta.get("score") if meta else 0.0,
@@ -815,6 +805,16 @@ async def upload(
             shutil.move(str(temp_path), str(target_path))
             results.append({"file": source_name, "status": "success", "chunks": chunks})
 
+            # ── [신규] 백그라운드에서 문서 요약 생성 ──
+            _src  = source_name
+            _text = text
+            _uid  = current_user.id
+            threading.Thread(
+                target=_run_summary_bg,
+                args=(_src, _text, _uid, None),
+                daemon=True,
+            ).start()
+
         except Exception as error:
             logger.error(f"Error uploading {file.filename}: {error}")
             results.append({"file": file.filename, "status": "error", "message": str(error)})
@@ -852,7 +852,6 @@ def get_files(current_user: UserInfo = Depends(get_current_user)):
 
 @app.get("/files-db")
 def get_files_from_db(current_user: UserInfo = Depends(get_current_user)):
-    """DB에 등록된 소스 목록과 실제 파일 정보, 청크 수를 함께 반환합니다."""
     indexed_names = list_indexed_sources(user_id=current_user.id)
     user_data_dir = DATA_DIR / current_user.id
     collection = get_collection()
@@ -860,7 +859,6 @@ def get_files_from_db(current_user: UserInfo = Depends(get_current_user)):
 
     for name in indexed_names:
         path = user_data_dir / name
-
         try:
             chunk_res = collection.get(
                 where={"$and": [{"source": name}, {"user_id": current_user.id}]},
@@ -868,7 +866,6 @@ def get_files_from_db(current_user: UserInfo = Depends(get_current_user)):
             )
             ids = chunk_res.get("ids") or []
             chunk_count = len(ids)
-            
             metadatas = chunk_res.get("metadatas") or []
             tags = []
             if metadatas and metadatas[0].get("tags"):
@@ -880,19 +877,14 @@ def get_files_from_db(current_user: UserInfo = Depends(get_current_user)):
         if path.exists():
             stat = path.stat()
             files_info.append({
-                "name": name,
-                "size": stat.st_size,
+                "name": name, "size": stat.st_size,
                 "updated_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-                "chunks": chunk_count,
-                "tags": tags,
+                "chunks": chunk_count, "tags": tags,
             })
         else:
             files_info.append({
-                "name": name,
-                "size": 0,
-                "updated_at": None,
-                "chunks": chunk_count,
-                "tags": tags,
+                "name": name, "size": 0, "updated_at": None,
+                "chunks": chunk_count, "tags": tags,
             })
 
     return {"count": len(files_info), "files": sorted(files_info, key=lambda x: x["name"])}
@@ -900,7 +892,7 @@ def get_files_from_db(current_user: UserInfo = Depends(get_current_user)):
 
 @app.delete("/file")
 def delete_file_single(name: str = Query(...), current_user: UserInfo = Depends(get_current_user)):
-    """단일 파일 삭제 (벡터 DB + 실제 파일)."""
+    """단일 파일 삭제 (벡터 DB + 실제 파일 + 요약)."""
     source_name = normalize_source_name(name)
     user_data_dir = DATA_DIR / current_user.id
     target_path = user_data_dir / source_name
@@ -910,6 +902,9 @@ def delete_file_single(name: str = Query(...), current_user: UserInfo = Depends(
         target_path.unlink()
     elif deleted_chunks == 0:
         raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다.")
+
+    # ── [신규] 문서 요약 삭제 ──
+    delete_document_summary(source_name, current_user.id)
 
     clear_caches()
     return {"file": source_name, "deleted_chunks": deleted_chunks}
@@ -927,6 +922,8 @@ def delete_files_batch(names: list[str] = Query(...), current_user: UserInfo = D
             if target_path.exists():
                 delete_source(source_name, user_id=current_user.id)
                 target_path.unlink()
+                # ── [신규] 요약 삭제 ──
+                delete_document_summary(source_name, current_user.id)
                 results.append({"file": source_name, "status": "success"})
             else:
                 results.append({"file": source_name, "status": "not_found"})
@@ -939,7 +936,7 @@ def delete_files_batch(names: list[str] = Query(...), current_user: UserInfo = D
 
 @app.post("/files/reindex")
 async def reindex_file(name: str = Query(...), current_user: UserInfo = Depends(get_current_user)):
-    """기존 파일을 다시 인덱싱합니다 (내용 변경 없이 청크 재생성)."""
+    """기존 파일을 다시 인덱싱하고 요약도 재생성합니다."""
     source_name = normalize_source_name(name)
     user_data_dir = DATA_DIR / current_user.id
     target_path = user_data_dir / source_name
@@ -953,6 +950,17 @@ async def reindex_file(name: str = Query(...), current_user: UserInfo = Depends(
             raise HTTPException(status_code=400, detail="파일에서 텍스트를 추출할 수 없습니다.")
         chunks = index_document(source_name, text, user_id=current_user.id)
         clear_caches()
+
+        # ── [신규] 요약 재생성 (백그라운드) ──
+        _src  = source_name
+        _text = text
+        _uid  = current_user.id
+        threading.Thread(
+            target=_run_summary_bg,
+            args=(_src, _text, _uid, None),
+            daemon=True,
+        ).start()
+
         return {"file": source_name, "chunks": chunks, "message": "재인덱싱이 완료되었습니다."}
     except HTTPException:
         raise
@@ -973,17 +981,17 @@ def update_file_tags(
     source_name = normalize_source_name(name)
     collection = get_collection()
     where_filter = {"$and": [{"source": source_name}, {"user_id": current_user.id}]}
-    
+
     res = collection.get(where=where_filter, include=["metadatas"])
     ids = res.get("ids") or []
     metadatas = res.get("metadatas") or []
-    
+
     if not ids:
         raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다.")
-        
+
     tag_str = ",".join(body.tags)
     for meta in metadatas:
         meta["tags"] = tag_str
-        
+
     collection.update(ids=ids, metadatas=metadatas)
     return {"message": "Tags updated", "tags": body.tags}

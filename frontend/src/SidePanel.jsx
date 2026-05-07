@@ -182,22 +182,22 @@ export default function SidePanel({
                   <div className="file-info">
                     <span className="file-name" title={file.name}>{file.name}</span>
                     <div className="file-meta">
-                      <span>{formatFileSize(file.size)}</span>
+                      <span className="file-size">{formatFileSize(file.size)}</span>
                       {file.chunks > 0 && (
-                        <span style={{ color: "var(--text-muted)", fontSize: "0.68rem" }}>
+                        <span className="file-chunks">
                           · {file.chunks}청크
                         </span>
                       )}
                       {file.tags && file.tags.length > 0 && (
-                        <div className="file-tags" style={{ display: "flex", gap: "4px", marginTop: "4px", flexWrap: "wrap" }}>
+                        <div className="file-tags">
                           {file.tags.map(tag => (
-                            <span key={tag} className="tag-badge" style={{ fontSize: "0.65rem", background: "var(--accent-light)", color: "var(--accent)", padding: "1px 5px", borderRadius: "4px" }}>{tag}</span>
+                            <span key={tag} className="tag-badge">{tag}</span>
                           ))}
                         </div>
                       )}
                     </div>
                   </div>
-                  <div className="file-item-actions" onClick={e => e.stopPropagation()} style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+                  <div className="file-item-actions" onClick={e => e.stopPropagation()}>
                     {/* 재인덱싱 버튼 */}
                     <button
                       className="btn-tag-edit"
