@@ -444,12 +444,20 @@ export function useRag(authFetch, user, logout) {
     addToast("Generation stopped.", "info");
   };
 
+  // currentSessionId를 ref로 추적하여 스트림 콜백에서 stale closure 방지
+  const currentSessionRef = useRef(currentSessionId);
+  useEffect(() => {
+    currentSessionRef.current = currentSessionId;
+  }, [currentSessionId]);
+
   const processStreamLine = useCallback((line, assistantId, sessionId) => {
     if (!line.trim()) {
       return;
     }
 
     const event = JSON.parse(line);
+    // ref를 통해 항상 최신 currentSessionId를 참조
+    const isActiveSession = currentSessionRef.current === sessionId;
 
     if (event.type === "chunk") {
       const updater = (prev) => ({
@@ -461,7 +469,7 @@ export function useRag(authFetch, user, logout) {
         ...prev,
         [sessionId]: updater(prev[sessionId] || {}),
       }));
-      if (currentSessionId === sessionId) {
+      if (isActiveSession) {
         updateMessage(assistantId, updater);
       }
       return;
@@ -473,7 +481,7 @@ export function useRag(authFetch, user, logout) {
         ...prev,
         [sessionId]: { ...(prev[sessionId] || {}), isSearching },
       }));
-      if (currentSessionId === sessionId) {
+      if (isActiveSession) {
         updateMessage(assistantId, { isSearching });
       }
       return;
@@ -490,23 +498,23 @@ export function useRag(authFetch, user, logout) {
         ...prev,
         [sessionId]: { ...(prev[sessionId] || {}), ...meta },
       }));
-      if (currentSessionId === sessionId) {
+      if (isActiveSession) {
         updateMessage(assistantId, meta);
       }
       return;
     }
 
     if (event.type === "message_id") {
-      if (currentSessionId === sessionId) {
+      if (isActiveSession) {
         updateMessage(assistantId, { id: event.id });
       }
       return;
     }
 
-    if (event.type === "suggestions" && currentSessionId === sessionId) {
+    if (event.type === "suggestions" && isActiveSession) {
       updateMessage(assistantId, { suggestions: event.items || [] });
     }
-  }, [currentSessionId, updateMessage]);
+  }, [updateMessage]);
 
   const sendMessage = async (preset, overrideHistory) => {
     const query = (preset ?? input).trim();
