@@ -110,9 +110,8 @@ def _ollama_chat(model, messages, stream, options):
         kwargs["options"] = options
     return ollama.chat(**kwargs)
 
-    # ── 프로바이더 상태 조회 (main.py 의 /health, /models, /stats 가 쓴다) ──
 
-
+# ── 프로바이더 상태 조회 (main.py 의 /health, /models, /stats 가 쓴다) ──
 def using_claude() -> bool:
     return _provider() == "claude"
 
@@ -127,9 +126,8 @@ def active_model() -> str:
 def claude_auth_mode() -> str:
     return "api_key" if _api_key() else "subscription_cli"
 
-    # ── Anthropic API (배포용) ───────────────────────────────────
 
-
+# ── Anthropic API (배포용) ───────────────────────────────────
 def _anthropic_kwargs(model, messages, options) -> dict:
     system, convo = _split_messages(messages)
     system = f"{system}\n\n{_FINAL_ANSWER_ONLY}".strip()
