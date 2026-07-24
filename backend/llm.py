@@ -59,6 +59,10 @@ def _claude_model(model: str | None) -> str:
     return os.getenv("CLAUDE_MODEL", "claude-opus-4-8")
 
 
+def _ollama_model(model: str | None = None) -> str:
+    return model or os.getenv("CHAT_MODEL_NAME", "mistral")
+
+
 # ── 공통 헬퍼 ──────────────────────────────────────────────
 def _wrap(text: str) -> dict:
     """ollama.chat(stream=False)의 반환 모양으로 감싼다."""
@@ -98,7 +102,7 @@ def _ollama_chat(model, messages, stream, options):
     import ollama
 
     kwargs: dict[str, Any] = {
-        "model": model or os.getenv("CHAT_MODEL_NAME", "mistral"),
+        "model": _ollama_model(model),
         "messages": messages,
         "stream": stream,
     }
@@ -117,7 +121,7 @@ def active_model() -> str:
     """현재 프로바이더가 실제로 쓰는 대화 모델. /stats 와 /models 가 함께 쓴다."""
     if _provider() == "claude":
         return _claude_model(None)
-    return os.getenv("CHAT_MODEL_NAME", "mistral")
+    return _ollama_model()
 
 
 def claude_auth_mode() -> str:
@@ -142,10 +146,15 @@ def _anthropic_kwargs(model, messages, options) -> dict:
     return kwargs
 
 
-def _anthropic_chat(model, messages, stream, options):
+@lru_cache(maxsize=1)
+def _anthropic_client():
     import anthropic
 
-    client = anthropic.Anthropic()
+    return anthropic.Anthropic()
+
+
+def _anthropic_chat(model, messages, stream, options):
+    client = _anthropic_client()
     kwargs = _anthropic_kwargs(model, messages, options)
 
     if stream:
@@ -162,6 +171,8 @@ def _anthropic_stream(client, kwargs) -> Iterator[dict]:
         for text in stream.text_stream:
             if text:
                 yield _wrap(text)
+        if stream.get_final_message().stop_reason == "refusal":
+            raise RuntimeError("Claude가 안전상의 이유로 응답을 거부했습니다.")
 
 
 # ── Claude Code 헤드리스 CLI (구독 인증, 로컬 개발용) ──────────
@@ -208,8 +219,8 @@ def _cli_once(model, system, prompt) -> dict:
     )
     try:
         data = json.loads(proc.stdout)
-    except json.JSONDecodeError:
-        raise RuntimeError(f"claude CLI 응답 파싱 실패: {proc.stderr.strip()[:300]}")
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"claude CLI 응답 파싱 실패: {proc.stderr.strip()[:300]}") from e
     # 종료 코드는 오류일 때도 0이다. is_error 로 판정해야 한다.
     if data.get("is_error"):
         raise RuntimeError(f"claude CLI 오류: {data.get('result', '')[:300]}")
