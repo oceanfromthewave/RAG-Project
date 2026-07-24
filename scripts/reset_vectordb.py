@@ -3,12 +3,12 @@ ChromaDB 벡터 데이터만 초기화하는 스크립트.
 history.db / users.db 는 건드리지 않습니다.
 
 사용법:
-  python reset_vectordb.py
+  python scripts/reset_vectordb.py
 """
 import shutil
 from pathlib import Path
 
-DB_DIR = Path(__file__).resolve().parent / "db"
+DB_DIR = Path(__file__).resolve().parent.parent / "db"
 
 def reset_chroma():
     removed = []

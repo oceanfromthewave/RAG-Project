@@ -20,7 +20,7 @@ uvicorn backend.main:app --reload
 python -m backend.ingest
 
 # Reset vector DB only (preserves history.db and users.db)
-python reset_vectordb.py
+python scripts/reset_vectordb.py
 ```
 
 ### Frontend
@@ -46,7 +46,7 @@ Copy `.env.example` to `.env`. Key variables:
 - `JWT_SECRET_KEY` — **required in production**; auto-generated (ephemeral) in development
 - `APP_ENV=production` enables: JWT secret enforcement, registration disabled by default
 
-**Important:** If `EMBED_MODEL_NAME` is changed, existing vectors become incompatible. Run `python reset_vectordb.py` then re-upload documents before restarting the server.
+**Important:** If `EMBED_MODEL_NAME` is changed, existing vectors become incompatible. Run `python scripts/reset_vectordb.py` then re-upload documents before restarting the server.
 
 ## Architecture
 
