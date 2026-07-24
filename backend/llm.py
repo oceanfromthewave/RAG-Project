@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import threading
 from functools import lru_cache
 from typing import Any, Iterator
 
@@ -19,9 +20,20 @@ _FINAL_ANSWER_ONLY = (
 # CLI의 --model이 받는 별칭들. 그 외 이름(mistral 등)은 Claude 모델이 아니다.
 _CLAUDE_ALIASES = {"opus", "sonnet", "haiku", "fable"}
 
+# claude 응답 기본 최대 출력 토큰. 비용·응답 절단을 좌우하므로 환경변수로 조정 가능.
+DEFAULT_MAX_TOKENS = int(os.getenv("CLAUDE_MAX_TOKENS", "4096"))
+
+_KNOWN_PROVIDERS = {"ollama", "claude"}
+
 
 def _provider() -> str:
-    return os.getenv("LLM_PROVIDER", "ollama").strip().lower()
+    p = os.getenv("LLM_PROVIDER", "ollama").strip().lower()
+    if p not in _KNOWN_PROVIDERS:
+        raise RuntimeError(
+            f"LLM_PROVIDER='{p}' 는 지원하지 않습니다. "
+            f"{sorted(_KNOWN_PROVIDERS)} 중 하나여야 합니다."
+        )
+    return p
 
 
 def _api_key() -> str:
@@ -122,7 +134,7 @@ def _anthropic_kwargs(model, messages, options) -> dict:
     # num_predict(ollama) → max_tokens 로만 옮긴다.
     kwargs: dict[str, Any] = {
         "model": _claude_model(model),
-        "max_tokens": int((options or {}).get("num_predict") or 4096),
+        "max_tokens": int((options or {}).get("num_predict") or DEFAULT_MAX_TOKENS),
         "messages": convo,
     }
     if system:
@@ -144,11 +156,13 @@ def _anthropic_chat(model, messages, stream, options):
         raise RuntimeError("Claude가 안전상의 이유로 응답을 거부했습니다.")
     return _wrap("".join(b.text for b in res.content if b.type == "text"))
 
+
 def _anthropic_stream(client, kwargs) -> Iterator[dict]:
     with client.messages.stream(**kwargs) as stream:
         for text in stream.text_stream:
             if text:
                 yield _wrap(text)
+
 
 # ── Claude Code 헤드리스 CLI (구독 인증, 로컬 개발용) ──────────
 def _cli_cmd(model: str | None, system: str, stream: bool) -> list[str]:
@@ -205,9 +219,23 @@ def _cli_once(model, system, prompt) -> dict:
 def _cli_stream(model, system, prompt) -> Iterator[dict]:
     proc = subprocess.Popen(
         _cli_cmd(model, system, stream=True),
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,  # 스트리밍 경로는 stderr를 파싱 안 함 → PIPE 미소비 데드락 제거
         text=True, encoding="utf-8", errors="replace", bufsize=1,
     )
+    # 블로킹 readline은 시계를 못 보므로, 데드라인 초과 시 프로세스를 죽이는 워치독.
+    timed_out = threading.Event()
+
+    def _kill_on_timeout():
+        timed_out.set()
+        if proc.poll() is None:
+            proc.kill()
+
+    watchdog = threading.Timer(_cli_timeout(), _kill_on_timeout)
+    watchdog.daemon = True
+    watchdog.start()
+
+    saw_result = False
     try:
         proc.stdin.write(prompt)
         proc.stdin.close()
@@ -219,21 +247,34 @@ def _cli_stream(model, system, prompt) -> Iterator[dict]:
                 evt = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if evt.get("type") == "stream_event":
+            etype = evt.get("type")
+            if etype == "stream_event":
                 inner = evt.get("event", {})
                 if inner.get("type") == "content_block_delta":
                     delta = inner.get("delta", {})
                     if delta.get("type") == "text_delta" and delta.get("text"):
                         yield _wrap(delta["text"])
-            elif evt.get("type") == "result" and evt.get("is_error"):
-                raise RuntimeError(f"claude CLI 오류: {evt.get('result', '')[:300]}")
+            elif etype == "result":
+                saw_result = True
+                if evt.get("is_error"):
+                    raise RuntimeError(f"claude CLI 오류: {evt.get('result', '')[:300]}")
     finally:
-        for pipe in (proc.stdin, proc.stdout, proc.stderr):
+        watchdog.cancel()
+        for pipe in (proc.stdin, proc.stdout):
             if pipe and not pipe.closed:
                 pipe.close()
         if proc.poll() is None:
             proc.terminate()
-        proc.wait(timeout=10)
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+    if timed_out.is_set():
+        raise RuntimeError(f"claude CLI 스트리밍 타임아웃 ({_cli_timeout()}s)")
+    if not saw_result:
+        raise RuntimeError("claude CLI 스트리밍이 result 이벤트 없이 종료되었습니다.")
+
 
 # ── 공개 API ────────────────────────────────────────────────
 def chat(model: str | None = None, messages: list[dict] | None = None,
@@ -259,4 +300,3 @@ def health() -> str:
         return f"ok (ollama, {len(models)} models)"
     if _api_key():
         return f"ok (claude api, {_claude_model(None)})"
-    return f"ok (claude cli/subscription, {_claude_model(None)}, {_claude_bin()})"

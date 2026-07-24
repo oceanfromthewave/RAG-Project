@@ -17,6 +17,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field, field_validator
+from backend.security import login_limiter, register_limiter, ask_limiter, upload_limiter, models_limiter, \
+    get_client_ip, login_guard
 
 load_dotenv()
 
@@ -65,7 +67,7 @@ from backend.rag import (
     ask_rag_stream,
     clear_caches,
     generate_session_title,
-    generate_document_summary,   # [신규]
+    generate_document_summary,  # [신규]
     should_retrieve,
     query_cache,
     rewrite_cache,
@@ -109,6 +111,7 @@ ALLOWED_EXTENSIONS = {
     ".yaml", ".yml", ".sql", ".sh", ".bash", ".png", ".jpg", ".jpeg"
 }
 
+
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
@@ -118,6 +121,7 @@ async def add_security_headers(request: Request, call_next):
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none';"
     return response
+
 
 from fastapi.responses import JSONResponse
 
@@ -139,11 +143,11 @@ async def global_exception_handler(request: Request, exc: Exception):
             status_code=exc.status_code,
             content={"detail": exc.detail},
         )
-    
+
     logger.error(f"UNHANDLED ERROR: {request.method} {request.url}")
     logger.error(f"Exception Type: {type(exc).__name__}")
     logger.error(f"Exception Detail: {str(exc)}", exc_info=True)
-    
+
     return JSONResponse(
         status_code=500,
         content={"detail": "예기치 못한 서버 오류가 발생했습니다. 관리자에게 문의해 주세요."},
@@ -278,14 +282,16 @@ def health_check():
 
     try:
         checks["llm"] = llm.health()
-    except Exception as e:
-        checks["llm"] = f"error: {e}"
+    except Exception:
+        logger.exception("health check failed: llm")
+        checks["llm"] = "error"
 
     try:
         total = get_collection().count()
         checks["chromadb"] = f"ok ({total} chunks)"
-    except Exception as e:
-        checks["chromadb"] = f"error: {e}"
+    except Exception:
+        logger.exception("health check failed: chromadb")
+        checks["chromadb"] = "error"
 
     try:
         from backend.history import HISTORY_DB_PATH
@@ -293,8 +299,9 @@ def health_check():
         with sqlite3.connect(HISTORY_DB_PATH) as conn:
             conn.execute("SELECT 1")
         checks["history_db"] = "ok"
-    except Exception as e:
-        checks["history_db"] = f"error: {e}"
+    except Exception:
+        logger.exception("health check failed: history_db")
+        checks["history_db"] = "error"
 
     all_ok = all(v.startswith("ok") for v in checks.values())
     return {
@@ -328,7 +335,8 @@ def get_stats(current_user: UserInfo = Depends(get_current_user)):
 
 
 @app.get("/models")
-def list_models(current_user: UserInfo = Depends(get_current_user)):
+def list_models(request: Request, current_user: UserInfo = Depends(get_current_user)):
+    models_limiter.check(request)
     if llm.using_claude():
         return {"models": [llm.active_model()]}
     try:
@@ -402,8 +410,8 @@ def me(current_user: UserInfo = Depends(get_current_user)):
 
 @app.post("/auth/change-password")
 def change_password_endpoint(
-    body: PasswordChange,
-    current_user: UserInfo = Depends(get_current_user),
+        body: PasswordChange,
+        current_user: UserInfo = Depends(get_current_user),
 ):
     try:
         change_password(current_user.id, body.old_password, body.new_password)
@@ -487,10 +495,10 @@ def get_cache_stats(admin: UserInfo = Depends(get_current_admin)):
 
 @app.get("/admin/logs")
 def get_activity_logs(
-    user_id: str | None = Query(None),
-    role: str | None = Query(None),
-    limit: int = Query(100, ge=1, le=500),
-    admin: UserInfo = Depends(get_current_admin)
+        user_id: str | None = Query(None),
+        role: str | None = Query(None),
+        limit: int = Query(100, ge=1, le=500),
+        admin: UserInfo = Depends(get_current_admin)
 ):
     import sqlite3
     from backend.history import HISTORY_DB_PATH
@@ -690,9 +698,9 @@ def ask_stream(request: Request, question: Question, current_user: UserInfo = De
 
         try:
             for event in ask_rag_stream(
-                question.query, model=question.model,
-                history=history_dicts, user_id=current_user.id,
-                selected_sources=selected_sources
+                    question.query, model=question.model,
+                    history=history_dicts, user_id=current_user.id,
+                    selected_sources=selected_sources
             ):
                 if event["type"] == "chunk":
                     full_answer += event["content"]
@@ -759,9 +767,9 @@ def ask_stream(request: Request, question: Question, current_user: UserInfo = De
 
 @app.post("/upload")
 async def upload(
-    request: Request,
-    files: list[UploadFile] = File(...),
-    current_user: UserInfo = Depends(get_current_user),
+        request: Request,
+        files: list[UploadFile] = File(...),
+        current_user: UserInfo = Depends(get_current_user),
 ):
     upload_limiter.check(request)
     if len(files) > MAX_FILES_PER_UPLOAD:
@@ -804,9 +812,9 @@ async def upload(
             results.append({"file": source_name, "status": "success", "chunks": chunks})
 
             # ── [신규] 백그라운드에서 문서 요약 생성 ──
-            _src  = source_name
+            _src = source_name
             _text = text
-            _uid  = current_user.id
+            _uid = current_user.id
             threading.Thread(
                 target=_run_summary_bg,
                 args=(_src, _text, _uid, None),
@@ -950,9 +958,9 @@ async def reindex_file(name: str = Query(...), current_user: UserInfo = Depends(
         clear_caches()
 
         # ── [신규] 요약 재생성 (백그라운드) ──
-        _src  = source_name
+        _src = source_name
         _text = text
-        _uid  = current_user.id
+        _uid = current_user.id
         threading.Thread(
             target=_run_summary_bg,
             args=(_src, _text, _uid, None),
@@ -970,11 +978,12 @@ async def reindex_file(name: str = Query(...), current_user: UserInfo = Depends(
 class FileTagsUpdate(BaseModel):
     tags: list[str]
 
+
 @app.patch("/file/tags")
 def update_file_tags(
-    name: str = Query(...),
-    body: FileTagsUpdate = Body(...),
-    current_user: UserInfo = Depends(get_current_user),
+        name: str = Query(...),
+        body: FileTagsUpdate = Body(...),
+        current_user: UserInfo = Depends(get_current_user),
 ):
     source_name = normalize_source_name(name)
     collection = get_collection()
