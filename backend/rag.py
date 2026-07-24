@@ -5,7 +5,7 @@ import re
 import threading
 from collections import OrderedDict
 
-import ollama
+from backend import llm
 
 from backend.store import (
     CHAT_MODEL_NAME,
@@ -246,7 +246,7 @@ def rewrite_query(query: str, model: str | None = None, history: list[dict] | No
         prompt = f"Given history and follow-up, rephrase to a standalone query.\nHistory:\n{history_text}\nFollow-up: {query}\nStandalone:"
     else:
         prompt = f"Rewrite to a search query.\nQuestion: {query}\nRewritten:"
-    response  = ollama.chat(
+    response  = llm.chat(
         model=target_model,
         messages=[{"role": "user", "content": prompt}],
         options={"temperature": 0.1},
@@ -264,7 +264,7 @@ def generate_session_title(query: str, answer: str, model: str | None = None) ->
         f"따옴표나 설명 없이 제목만 출력해.\n\n질문: {query[:200]}"
     )
     try:
-        res   = ollama.chat(
+        res   = llm.chat(
             model=model or CHAT_MODEL_NAME,
             messages=[{"role": "user", "content": prompt}],
             options={"temperature": 0.2, "num_predict": 30},
@@ -283,7 +283,7 @@ def generate_suggestions(query: str, answer: str, model: str | None = None) -> l
         "각 질문은 한 줄씩, 번호나 기호 없이 질문만 출력해:"
     )
     try:
-        res     = ollama.chat(
+        res     = llm.chat(
             model=model or CHAT_MODEL_NAME,
             messages=[{"role": "user", "content": prompt}],
             options={"temperature": 0.5, "num_predict": 80},
@@ -313,7 +313,7 @@ def generate_document_summary(text: str, source: str, model: str | None = None) 
         "요약:"
     )
     try:
-        res = ollama.chat(
+        res = llm.chat(
             model=model or CHAT_MODEL_NAME,
             messages=[{"role": "user", "content": prompt}],
             options={"temperature": 0.1, "num_predict": 800},
@@ -608,11 +608,11 @@ def ask_rag(
         return {"answer": "이해하지 못했습니다.", "context": "", "sources": [], "score": 0.0}
 
     if is_greeting(query):
-        res = ollama.chat(model=model or CHAT_MODEL_NAME, messages=[{"role": "user", "content": query}])
+        res = llm.chat(model=model or CHAT_MODEL_NAME, messages=[{"role": "user", "content": query}])
         return {"answer": _get_content(res), "context": "", "sources": [], "score": 0.0}
 
     if not selected_sources and not should_retrieve(query):
-        res = ollama.chat(model=model or CHAT_MODEL_NAME, messages=[{"role": "user", "content": query}])
+        res = llm.chat(model=model or CHAT_MODEL_NAME, messages=[{"role": "user", "content": query}])
         return {"answer": _get_content(res), "context": "", "sources": [], "score": 0.0}
 
     prepared = prepare_answer(query, model=model, history=history, user_id=user_id, selected_sources=selected_sources)
@@ -624,7 +624,7 @@ def ask_rag(
         messages.extend(history[-5:])
     messages.append({"role": "user", "content": prepared["prompt"]})
 
-    response = ollama.chat(model=model or CHAT_MODEL_NAME, messages=messages)
+    response = llm.chat(model=model or CHAT_MODEL_NAME, messages=messages)
     result   = {
         "answer":  _get_content(response).strip(),
         "context": prepared["context"],
@@ -651,7 +651,7 @@ def ask_rag_stream(
 
     if is_greeting(query):
         yield {"type": "meta", "sources": [], "context": "", "score": 0.0}
-        for chunk in ollama.chat(model=target_model, messages=[{"role": "user", "content": query}], stream=True):
+        for chunk in llm.chat(model=target_model, messages=[{"role": "user", "content": query}], stream=True):
             content = _get_content(chunk)
             if content:
                 yield {"type": "chunk", "content": content}
@@ -659,7 +659,7 @@ def ask_rag_stream(
 
     if not selected_sources and not should_retrieve(query):
         yield {"type": "meta", "sources": [], "context": "", "score": 0.0}
-        for chunk in ollama.chat(model=target_model, messages=[{"role": "user", "content": query}], stream=True):
+        for chunk in llm.chat(model=target_model, messages=[{"role": "user", "content": query}], stream=True):
             content = _get_content(chunk)
             if content:
                 yield {"type": "chunk", "content": content}
@@ -679,7 +679,7 @@ def ask_rag_stream(
     messages.append({"role": "user", "content": prepared["prompt"]})
 
     full_answer = ""
-    for chunk in ollama.chat(model=target_model, messages=messages, stream=True):
+    for chunk in llm.chat(model=target_model, messages=messages, stream=True):
         content = _get_content(chunk)
         if content:
             full_answer += content
