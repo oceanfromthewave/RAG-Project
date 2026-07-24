@@ -10,7 +10,7 @@ from pathlib import Path
 from uuid import uuid4
 from datetime import datetime
 
-import ollama
+from backend import llm
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile, status, Request, Body
 from fastapi.middleware.cors import CORSMiddleware
@@ -277,14 +277,9 @@ def health_check():
     checks: dict[str, str] = {}
 
     try:
-        models_info = ollama.list()
-        if isinstance(models_info, dict):
-            model_count = len(models_info.get("models", []))
-        else:
-            model_count = len(getattr(models_info, "models", []) or [])
-        checks["ollama"] = f"ok ({model_count} models)"
+        checks["llm"] = llm.health()
     except Exception as e:
-        checks["ollama"] = f"error: {e}"
+        checks["llm"] = f"error: {e}"
 
     try:
         total = get_collection().count()
@@ -326,7 +321,7 @@ def get_stats(current_user: UserInfo = Depends(get_current_user)):
         "total_size_mb": round(total_size / (1024 * 1024), 2),
         "embed_model": EMBED_MODEL_NAME,
         "reranker_model": RERANK_MODEL_NAME,
-        "chat_model": CHAT_MODEL_NAME,
+        "chat_model": llm.active_model(),
         "allowed_extensions": sorted(list(ALLOWED_EXTENSIONS)),
         "max_upload_size_mb": MAX_UPLOAD_SIZE // (1024 * 1024),
     }
@@ -334,7 +329,10 @@ def get_stats(current_user: UserInfo = Depends(get_current_user)):
 
 @app.get("/models")
 def list_models(current_user: UserInfo = Depends(get_current_user)):
+    if llm.using_claude():
+        return {"models": [llm.active_model()]}
     try:
+        import ollama
         models_info = ollama.list()
         if isinstance(models_info, dict):
             raw_models = models_info.get("models", [])
@@ -639,7 +637,7 @@ def ask(request: Request, question: Question, current_user: UserInfo = Depends(g
     add_message(current_session_id, "user", question.query)
 
     if not should_retrieve(question.query):
-        res = ollama.chat(
+        res = llm.chat(
             model=question.model or CHAT_MODEL_NAME,
             messages=[{"role": "user", "content": question.query}]
         )
