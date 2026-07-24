@@ -1,0 +1,78 @@
+language: ko-KR
+early_access: false
+enable_free_tier: true
+
+reviews:
+  profile: assertive
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: false
+
+  auto_review:
+    enabled: true
+    auto_incremental_review: false
+    drafts: false
+    base_branches:
+      - main
+      - "feature/.*"
+
+  path_filters:
+    - "!**/node_modules/**"
+    - "!**/dist/**"
+    - "!**/__pycache__/**"
+    - "!**/*.lock"
+    - "!package-lock.json"
+    - "!db/**"
+    - "!data/docs/**"
+
+  path_instructions:
+
+    - path: "backend/**/*.py"
+      instructions: >
+        단일 책임 원칙을 검토하라.
+        30줄이 넘는 함수는 분리를 검토하라.
+        가변 기본 인자(mutable default argument)를 지적하라.
+        except Exception 으로 광범위하게 잡는 코드를 지적하라.
+        예외를 삼키고 넘어가는(silent pass) 코드를 지적하라.
+        파일 핸들·DB 커넥션에 with 문 사용 여부를 확인하라.
+        SQL 문자열 포매팅 대신 파라미터 바인딩 사용을 확인하라.
+        타입 힌트 누락을 지적하라.
+        Magic Number 를 지적하라.
+        print 대신 logging 사용을 권장하라.
+        f-string 로깅 대신 lazy 포매팅(logger.info("%s", x))을 권장하라.
+        캐시에 저장된 객체를 제자리에서 변형(mutate)하는 코드를 지적하라.
+        사용자 입력이 LLM 프롬프트에 들어가는 경로에서 인젝션 위험을 검토하라.
+        subprocess 호출 시 shell=True 사용과 인자 주입 위험을 지적하라.
+
+    - path: "backend/main.py"
+      instructions: >
+        엔드포인트마다 인증 의존성(Depends)이 걸려 있는지 확인하라.
+        사용자별 데이터 격리(user_id 필터)가 누락되지 않았는지 확인하라.
+        레이트 리밋 적용 여부를 확인하라.
+        에러 응답에 내부 구현 정보나 스택 트레이스가 새지 않는지 확인하라.
+
+    - path: "tests/**/*.py"
+      instructions: >
+        Given-When-Then 구조를 권장한다.
+        테스트 하나는 하나의 목적만 검증해야 한다.
+        Assertion 부족 여부를 확인하라.
+        테스트 이름이 검증 대상을 설명하는지 확인하라.
+        실제 DB 나 외부 API 에 의존하는 테스트를 지적하라.
+
+    - path: "frontend/src/**/*.jsx"
+      instructions: >
+        React Hook 규칙을 확인하라.
+        useState 업데이터 함수 안에서 부작용(side effect)을 일으키는 코드를 지적하라.
+        불필요한 useMemo/useCallback 을 지적하라.
+        리스트 렌더링에서 key 누락 여부를 확인하라.
+        useEffect 의존성 배열 누락을 확인하라.
+        접근성(a11y)을 검토하라.
+
+    - path: "frontend/src/**/*.test.jsx"
+      instructions: >
+        하나의 테스트는 하나의 동작만 검증해야 한다.
+        구현 세부사항이 아니라 사용자 관점의 동작을 검증하는지 확인하라.
+
+chat:
+  auto_reply: true
