@@ -1,0 +1,9 @@
+-r requirements.txt
+
+# 테스트 러너
+pytest>=8.0.0,<9.0.0
+
+# fastapi.testclient.TestClient 가 내부적으로 요구한다.
+# async 엔드포인트도 TestClient 가 이벤트 루프를 돌려주므로
+# pytest-asyncio 는 필요하지 않다.
+httpx>=0.27.0,<0.29.0
