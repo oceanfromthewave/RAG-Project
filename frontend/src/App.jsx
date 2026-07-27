@@ -1,14 +1,14 @@
 import { Suspense, useEffect, useState, useCallback } from "react";
 import { Toaster } from "react-hot-toast";
 import "./App.css";
-import { useAuth } from "./AuthContext";
-import LoginPage from "./LoginPage";
-import { useRag } from "./useRag";
-import Workspace from "./Workspace";
-import TopBar from "./TopBar";
-import ConfirmModal from "./ConfirmModal";
-import { ToastRegion } from "./Toast";
-import { DocViewerModal, ShortcutsModal } from "./ChatComponents";
+import { useAuth } from "./features/auth/AuthContext";
+import LoginPage from "./features/auth/LoginPage";
+import { useRag } from "./features/chat/useRag";
+import Workspace from "./pages/Workspace";
+import TopBar from "./components/TopBar";
+import ConfirmModal from "./components/ConfirmModal";
+import { ToastRegion } from "./components/Toast";
+import { DocViewerModal, ShortcutsModal } from "./features/chat/ChatComponents";
 
 function App() {
   const { token, user, logout, authFetch } = useAuth();
