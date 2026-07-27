@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -22,10 +23,10 @@ logging.basicConfig(
 logger = logging.getLogger("security")
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     yield
-    # 종료 시 백그라운드 스레드풀 정리(대기 작업 취소, 멈춘 LLM 호출이 종료를 막지 않게).
-    shutdown_background(wait=False)
+    # 종료 시 이후 백그라운드 제출을 거절(멈춘 LLM 호출이 종료를 막지 않게).
+    shutdown_background()
 
 
 app = FastAPI(title="Internal RAG API", lifespan=lifespan)
