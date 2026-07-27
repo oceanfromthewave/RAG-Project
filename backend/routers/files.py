@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import shutil
-import threading
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
@@ -10,6 +9,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, UploadFile, status
 
 from backend.config import ALLOWED_EXTENSIONS, MAX_FILES_PER_UPLOAD, MAX_UPLOAD_SIZE
+from backend.core.background import submit_background
 from backend.core.security import upload_limiter
 from backend.schemas import FileTagsUpdate
 from backend.services.auth import UserInfo, get_current_user
@@ -117,15 +117,8 @@ async def upload(
             shutil.move(str(temp_path), str(target_path))
             results.append({"file": source_name, "status": "success", "chunks": chunks})
 
-            # ── [신규] 백그라운드에서 문서 요약 생성 ──
-            _src = source_name
-            _text = text
-            _uid = current_user.id
-            threading.Thread(
-                target=_run_summary_bg,
-                args=(_src, _text, _uid, None),
-                daemon=True,
-            ).start()
+            # ── 백그라운드(제한된 풀)에서 문서 요약 생성 ──
+            submit_background(_run_summary_bg, source_name, text, current_user.id, None)
 
         except Exception:
             logger.exception("파일 업로드 실패: %s", file.filename)
@@ -272,15 +265,8 @@ async def reindex_file(name: str = Query(...), current_user: UserInfo = Depends(
         chunks = index_document(source_name, text, user_id=current_user.id)
         clear_caches()
 
-        # ── [신규] 요약 재생성 (백그라운드) ──
-        _src = source_name
-        _text = text
-        _uid = current_user.id
-        threading.Thread(
-            target=_run_summary_bg,
-            args=(_src, _text, _uid, None),
-            daemon=True,
-        ).start()
+        # ── 요약 재생성 (제한된 백그라운드 풀) ──
+        submit_background(_run_summary_bg, source_name, text, current_user.id, None)
 
         return {"file": source_name, "chunks": chunks, "message": "재인덱싱이 완료되었습니다."}
     except HTTPException:
