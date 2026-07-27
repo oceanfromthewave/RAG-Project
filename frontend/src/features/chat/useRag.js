@@ -489,7 +489,8 @@ export function useRag(authFetch, user, logout) {
       if (isActiveSession) {
         updateMessage(assistantId, updater);
       }
-      return;
+      // 스트림이 정상 종료돼도 성공 토스트로 덮이지 않도록 오류 발생을 알린다.
+      return true;
     }
 
     if (event.type === "status") {
@@ -596,6 +597,7 @@ export function useRag(authFetch, user, logout) {
     ).slice(-6);
 
     let actualSessionId = currentSessionId;
+    let streamHadError = false;
 
     try {
       const response = await authFetch(`${API_BASE_URL}/ask-stream`, {
@@ -665,7 +667,9 @@ export function useRag(authFetch, user, logout) {
             continue;
           }
 
-          processStreamLine(line, assistantId, actualSessionId || tempSessionId);
+          if (processStreamLine(line, assistantId, actualSessionId || tempSessionId)) {
+            streamHadError = true;
+          }
         }
 
         if (done) {
@@ -682,9 +686,18 @@ export function useRag(authFetch, user, logout) {
       setCurrentSessionId((prevCurrent) => {
         if (actualSessionId && prevCurrent !== actualSessionId) {
           const title = `${query.slice(0, 15)}${query.length > 15 ? "..." : ""}`;
-          addToast(`"${title}" finished in the background.`, "success", () => {
-            void loadSession(actualSessionId);
-          });
+          if (streamHadError) {
+            addToast(`"${title}" finished with an error.`, "error", () => {
+              void loadSession(actualSessionId);
+            });
+          } else {
+            addToast(`"${title}" finished in the background.`, "success", () => {
+              void loadSession(actualSessionId);
+            });
+          }
+        } else if (streamHadError) {
+          setStatusMessage(TEXT.answerFailed);
+          addToast(TEXT.answerFailed, "error");
         } else {
           setStatusMessage(TEXT.answerReady);
           addToast(TEXT.answerReady, "success");

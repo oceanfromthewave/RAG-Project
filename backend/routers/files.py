@@ -58,6 +58,10 @@ def _run_summary_bg(source_name: str, text: str, user_id: str, model: str | None
         if summary:
             upsert_document_summary(source_name, user_id, summary)
             logger.info("[Summary] '%s' 요약 저장 완료 (%d자)", source_name, len(summary))
+        else:
+            # generate_document_summary 는 LLM 오류를 내부에서 삼키고 빈 문자열을
+            # 반환하므로, 빈 요약도 실패로 남겨 관측 가능하게 한다.
+            logger.warning("[Summary] '%s' 요약이 비어 저장하지 않음", source_name)
     except Exception:
         logger.warning("[Summary] '%s' 요약 생성 실패", source_name, exc_info=True)
 
