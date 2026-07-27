@@ -309,3 +309,5 @@ def health() -> str:
         return f"ok (ollama, {len(models)} models)"
     if _api_key():
         return f"ok (claude api, {_claude_model(None)})"
+    # 키가 없으면 None 을 반환해 헬스체크(v.startswith)가 터지지 않도록 문자열을 돌려준다.
+    return "error (claude api key 없음)"

@@ -57,12 +57,17 @@ def delete_user_account(user_id: str, admin: UserInfo = Depends(get_current_admi
     # 정규화되지 않은 id("../" 등)로 엉뚱한 디렉터리를 지우는 것을 막는다.
     if not get_user_by_id(user_id):
         raise HTTPException(status_code=404, detail="존재하지 않는 사용자입니다.")
-    # 경로가 DATA_DIR 하위인지 파괴적 작업 시작 전에 검증한다. 안전하지 않으면
-    # (정규화 실패·경로 이탈) 소스/디렉터리/DB 삭제를 하나도 진행하지 않고 중단한다.
+    # 경로를 파괴적 작업 시작 전에 검증한다. 안전하지 않으면(정규화 실패·경로 이탈·
+    # 심볼릭 링크) 소스/디렉터리/DB 삭제를 하나도 진행하지 않고 중단한다.
     data_root = DATA_DIR.resolve()
-    user_data_dir = (DATA_DIR / user_id).resolve()
-    is_safe = user_data_dir != data_root and data_root in user_data_dir.parents
-    if not is_safe:
+    raw_user_dir = DATA_DIR / user_id
+    # resolve() 는 링크를 따라가므로, 원본 경로가 링크이면(다른 사용자/시스템
+    # 디렉터리를 가리킬 수 있음) resolve 전에 먼저 거부한다.
+    if raw_user_dir.is_symlink():
+        raise HTTPException(status_code=400, detail="잘못된 사용자 경로입니다.")
+    user_data_dir = raw_user_dir.resolve()
+    # DATA_DIR 의 직접 하위 디렉터리만 허용한다(중첩 경로·상위 이탈 차단).
+    if user_data_dir.parent != data_root:
         raise HTTPException(status_code=400, detail="잘못된 사용자 경로입니다.")
     for source in list_indexed_sources(user_id=user_id):
         delete_source(source, user_id=user_id)
