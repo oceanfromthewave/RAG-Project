@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from backend.store import DATA_DIR, ensure_storage_dirs, index_document, read_document, ALLOWED_SUFFIXES
+from backend.services.store import DATA_DIR, ensure_storage_dirs, index_document, read_document, ALLOWED_SUFFIXES
 
 
 def main():

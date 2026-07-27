@@ -41,3 +41,6 @@ Thumbs.db
 # (Optional) If you want to exclude local documents from the repo
 data/docs/*
 !data/docs/.gitkeep
+
+# 작업 로그 (개인 기록 — 공개 저장소에 커밋하지 않음)
+record.md

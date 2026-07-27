@@ -8,7 +8,7 @@ from threading import Lock
 
 from fastapi import HTTPException, Request, status
 
-from backend.store import DB_DIR
+from backend.services.store import DB_DIR
 
 TRUST_PROXY_HEADERS = os.getenv("TRUST_PROXY_HEADERS", "false").lower() == "true"
 

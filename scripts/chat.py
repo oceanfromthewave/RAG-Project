@@ -4,7 +4,7 @@ from pathlib import Path
 # scripts/ 에서 실행해도 repo 루트를 import 경로에 올려 backend 패키지를 찾게 한다.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from backend.rag import ask_rag
+from backend.services.rag import ask_rag
 
 
 def main():
