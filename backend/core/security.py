@@ -132,3 +132,5 @@ ask_limiter = RateLimiter(max_requests=30, window_seconds=60)
 upload_limiter = RateLimiter(max_requests=10, window_seconds=300)
 login_guard = LoginGuard()
 models_limiter = RateLimiter(max_requests=30, window_seconds=60)
+# 토큰 탈취 시 old_password 무제한 대입을 막기 위한 비밀번호 변경 레이트 리밋.
+password_change_limiter = RateLimiter(max_requests=5, window_seconds=300)

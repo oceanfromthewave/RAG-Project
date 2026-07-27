@@ -475,6 +475,23 @@ export function useRag(authFetch, user, logout) {
       return;
     }
 
+    if (event.type === "error") {
+      const message = event.message || "답변 생성 중 오류가 발생했습니다.";
+      const updater = (prev) => ({
+        ...prev,
+        content: (prev.content || "") + (prev.content ? "\n\n" : "") + `⚠️ ${message}`,
+        isSearching: false,
+      });
+      setStreamingMessages((prev) => ({
+        ...prev,
+        [sessionId]: updater(prev[sessionId] || {}),
+      }));
+      if (isActiveSession) {
+        updateMessage(assistantId, updater);
+      }
+      return;
+    }
+
     if (event.type === "status") {
       const isSearching = event.state === "searching";
       setStreamingMessages((prev) => ({
