@@ -32,6 +32,9 @@ logger = logging.getLogger("security")
 
 router = APIRouter(tags=["chat"])
 
+# 새 세션 임시 제목으로 쓸 질문 미리보기 길이(자동 제목 생성 전까지 표시).
+SESSION_TITLE_PREVIEW_LEN = 30
+
 
 def sanitize_selected_sources(selected_files: list[str], user_id: str) -> list[str]:
     try:
@@ -53,11 +56,17 @@ def resolve_session(question: Question, user_id: str) -> tuple[str, bool]:
     """
     if question.session_id:
         owner = get_session_owner(question.session_id)
-        if owner and owner != user_id:
+        if owner is None:
+            raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
+        if owner != user_id:
             raise HTTPException(status_code=403, detail="이 세션에 접근할 권한이 없습니다.")
         return question.session_id, False
 
-    title = (question.query[:30] + "...") if len(question.query) > 30 else question.query
+    title = (
+        question.query[:SESSION_TITLE_PREVIEW_LEN] + "..."
+        if len(question.query) > SESSION_TITLE_PREVIEW_LEN
+        else question.query
+    )
     session_id = create_session(
         title=title, model=question.model,
         user_id=user_id, workspace_id=question.workspace_id,
@@ -115,6 +124,7 @@ def ask_stream(request: Request, question: Question, current_user: UserInfo = De
         full_answer = ""
         meta = None
         message_saved = False
+        error_message = None
 
         try:
             for event in ask_rag_stream(
@@ -165,17 +175,22 @@ def ask_stream(request: Request, question: Question, current_user: UserInfo = De
             # 예외를 로그만 남기고 삼키면 클라이언트는 스트림이 이유 없이 끊긴 것으로 본다.
             # NDJSON error 이벤트로 명시적으로 알린다.
             logger.exception("스트림 생성 오류")
+            error_message = "답변 생성 중 오류가 발생했습니다."
             yield json.dumps(
-                {"type": "error", "message": "답변 생성 중 오류가 발생했습니다."},
+                {"type": "error", "message": error_message},
                 ensure_ascii=False,
             ) + "\n"
 
         finally:
-            if not message_saved and (full_answer.strip() or meta):
+            # 초기 스트림 실패 시 full_answer·meta가 모두 비어도, 오류가 있었다면
+            # 사용자 질문만 남고 답변이 없는 상태를 막기 위해 오류 메시지를 저장한다.
+            if not message_saved and (full_answer.strip() or meta or error_message):
                 final_content = full_answer
                 if not final_content.strip():
                     if meta and meta.get("score", 0) < RELEVANCE_THRESHOLD:
                         final_content = NO_CONTEXT_ANSWER
+                    elif error_message:
+                        final_content = f"⚠️ {error_message}"
                     else:
                         final_content = "답변 생성 중 세션이 전환되어 중단되었습니다."
 

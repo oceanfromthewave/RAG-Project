@@ -77,7 +77,10 @@ def change_password_endpoint(
         body: PasswordChange,
         current_user: UserInfo = Depends(get_current_user),
 ):
+    # IP 기준 + 사용자 기준 양쪽으로 제한한다. IP만 제한하면 토큰 탈취 후
+    # IP를 바꿔가며 old_password 를 무제한 대입할 수 있다.
     password_change_limiter.check(request)
+    password_change_limiter.check_key(f"pwchange:{current_user.id}")
     try:
         change_password(current_user.id, body.old_password, body.new_password)
     except ValueError as exc:

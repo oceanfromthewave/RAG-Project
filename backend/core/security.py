@@ -34,6 +34,13 @@ class RateLimiter:
     def check(self, request: Request, key_suffix: str = "") -> None:
         ip = get_client_ip(request)
         key = f"{ip}:{key_suffix}" if key_suffix else ip
+        self.check_key(key)
+
+    def check_key(self, key: str) -> None:
+        """IP가 아닌 임의의 키(예: 사용자 ID)로 레이트 리밋을 적용한다.
+
+        IP를 바꿔 IP별 버킷을 새로 받는 우회를 막아야 할 때 사용한다.
+        """
         now = time.monotonic()
         cutoff = now - self.window_seconds
 
@@ -133,4 +140,10 @@ upload_limiter = RateLimiter(max_requests=10, window_seconds=300)
 login_guard = LoginGuard()
 models_limiter = RateLimiter(max_requests=30, window_seconds=60)
 # 토큰 탈취 시 old_password 무제한 대입을 막기 위한 비밀번호 변경 레이트 리밋.
-password_change_limiter = RateLimiter(max_requests=5, window_seconds=300)
+# IP 기준(check)과 사용자 기준(check_key) 양쪽에 적용해 IP 교체 우회를 막는다.
+PASSWORD_CHANGE_MAX_ATTEMPTS = 5
+PASSWORD_CHANGE_WINDOW_SECONDS = 300
+password_change_limiter = RateLimiter(
+    max_requests=PASSWORD_CHANGE_MAX_ATTEMPTS,
+    window_seconds=PASSWORD_CHANGE_WINDOW_SECONDS,
+)

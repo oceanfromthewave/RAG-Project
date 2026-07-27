@@ -59,10 +59,14 @@ def delete_user_account(user_id: str, admin: UserInfo = Depends(get_current_admi
         raise HTTPException(status_code=404, detail="존재하지 않는 사용자입니다.")
     for source in list_indexed_sources(user_id=user_id):
         delete_source(source, user_id=user_id)
-    # 경로가 DATA_DIR 하위인지 재확인(방어적) 후에만 삭제한다.
+    # 경로가 DATA_DIR 하위인지 먼저 검증한다. 안전하지 않으면(정규화 실패·경로 이탈)
+    # rmtree만 건너뛰고 나머지 삭제를 진행하면 안 되므로 즉시 중단한다.
     data_root = DATA_DIR.resolve()
     user_data_dir = (DATA_DIR / user_id).resolve()
-    if user_data_dir != data_root and data_root in user_data_dir.parents and user_data_dir.exists():
+    is_safe = user_data_dir != data_root and data_root in user_data_dir.parents
+    if not is_safe:
+        raise HTTPException(status_code=400, detail="잘못된 사용자 경로입니다.")
+    if user_data_dir.exists():
         shutil.rmtree(user_data_dir)
     delete_user_history(user_id)  # document_summaries도 함께 삭제됨
     clear_caches()
