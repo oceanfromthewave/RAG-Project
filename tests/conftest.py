@@ -19,7 +19,7 @@ def clear_rag_caches():
     이걸 비우지 않으면 단독 실행은 통과하고 전체 실행만 깨지는,
     가장 디버깅하기 어려운 종류의 실패가 난다.
     """
-    from backend.rag import clear_caches
+    from backend.services.rag import clear_caches
 
     clear_caches()
     yield
@@ -29,7 +29,7 @@ def clear_rag_caches():
 @pytest.fixture
 def temp_users_db(tmp_path, monkeypatch):
     """users.db 를 임시 경로로 격리한 auth 모듈을 준다."""
-    import backend.auth as auth
+    import backend.services.auth as auth
 
     monkeypatch.setattr(auth, "USERS_DB_PATH", tmp_path / "users.db")
     auth.init_users_db()
@@ -67,7 +67,7 @@ class FakeLLM:
 @pytest.fixture
 def fake_llm(monkeypatch):
     """rag 모듈이 보는 llm.chat 을 가로챈다."""
-    import backend.rag as rag
+    import backend.services.rag as rag
 
     fake = FakeLLM()
     monkeypatch.setattr(rag.llm, "chat", fake.chat)

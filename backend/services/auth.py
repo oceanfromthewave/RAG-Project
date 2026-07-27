@@ -13,7 +13,7 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel
 
-from backend.store import DB_DIR
+from backend.services.store import DB_DIR
 
 USERS_DB_PATH = DB_DIR / "users.db"
 

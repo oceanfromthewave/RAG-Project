@@ -5,7 +5,7 @@ import sqlite3
 from datetime import datetime
 from uuid import uuid4
 
-from backend.store import DB_DIR
+from backend.services.store import DB_DIR
 
 HISTORY_DB_PATH = DB_DIR / "history.db"
 

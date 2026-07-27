@@ -5,16 +5,16 @@ import re
 import threading
 from collections import OrderedDict
 
-from backend import llm
+from backend.services import llm
 
-from backend.store import (
+from backend.services.store import (
     CHAT_MODEL_NAME,
     get_adjacent_chunks,
     get_collection,
     get_embed_model,
     get_reranker,
 )
-from backend.history import (
+from backend.services.history import (
     get_document_summary,
     upsert_document_summary,
 )

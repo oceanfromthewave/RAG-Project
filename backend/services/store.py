@@ -11,7 +11,7 @@ from docx import Document as DocxDocument
 from pypdf import PdfReader
 from sentence_transformers import CrossEncoder, SentenceTransformer
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 DATA_DIR = BASE_DIR / "data" / "docs"
 DB_DIR   = BASE_DIR / "db"
 
