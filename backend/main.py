@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
@@ -8,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from backend.config import ALLOWED_ORIGINS
+from backend.core.background import shutdown_background
 from backend.routers import admin, auth, chat, files, sessions, system, workspaces
 from backend.services.store import ensure_storage_dirs
 
@@ -19,7 +21,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger("security")
 
-app = FastAPI(title="Internal RAG API")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    # 종료 시 백그라운드 스레드풀 정리(대기 작업 취소, 멈춘 LLM 호출이 종료를 막지 않게).
+    shutdown_background(wait=False)
+
+
+app = FastAPI(title="Internal RAG API", lifespan=lifespan)
 
 
 @app.middleware("http")

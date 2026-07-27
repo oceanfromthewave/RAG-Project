@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import json
 import logging
-import threading
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from backend.core.background import submit_background
 from backend.core.security import ask_limiter
 from backend.schemas import Question
 from backend.services import llm
@@ -169,7 +169,7 @@ def ask_stream(request: Request, question: Question, current_user: UserInfo = De
                         except Exception:
                             logger.warning("자동 제목 생성 실패", exc_info=True)
 
-                    threading.Thread(target=_gen_title_bg, daemon=True).start()
+                    submit_background(_gen_title_bg)
 
         except Exception:
             # 예외를 로그만 남기고 삼키면 클라이언트는 스트림이 이유 없이 끊긴 것으로 본다.

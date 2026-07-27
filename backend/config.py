@@ -17,6 +17,12 @@ MAX_FILES_PER_UPLOAD = int(os.getenv("MAX_FILES_PER_UPLOAD", 5))
 MAX_QUESTION_LENGTH = int(os.getenv("MAX_QUESTION_LENGTH", 4000))
 MAX_HISTORY_MESSAGES = int(os.getenv("MAX_HISTORY_MESSAGES", 12))
 
+# ── 백그라운드 작업 (문서 요약 / 세션 제목 생성) ─────────────
+# 업로드·재인덱싱·새 세션마다 무제한 데몬 스레드를 띄우면 동시 LLM 호출과
+# 스레드 수가 폭증한다. 공용 스레드풀로 동시 실행 수와 대기열을 제한한다.
+BG_MAX_WORKERS = int(os.getenv("BG_MAX_WORKERS", 4))
+BG_MAX_QUEUE = int(os.getenv("BG_MAX_QUEUE", 32))
+
 ALLOW_REGISTRATION = os.getenv(
     "ALLOW_REGISTRATION",
     "false" if APP_ENV in {"prod", "production"} else "true",
