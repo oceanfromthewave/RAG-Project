@@ -50,7 +50,7 @@ def get_global_stats(admin: UserInfo = Depends(get_current_admin)):
 
 
 @router.delete("/users/{user_id}")
-def delete_user_account(user_id: str, admin: UserInfo = Depends(get_current_admin)):
+def delete_user_account(user_id: str, admin: UserInfo = Depends(get_current_admin)) -> dict[str, str]:
     if user_id == admin.id:
         raise HTTPException(status_code=400, detail="자기 자신은 삭제할 수 없습니다.")
     # 파괴적 삭제(rmtree) 전에 반드시 존재 여부를 먼저 검증한다.
@@ -71,8 +71,12 @@ def delete_user_account(user_id: str, admin: UserInfo = Depends(get_current_admi
         raise HTTPException(status_code=400, detail="잘못된 사용자 경로입니다.")
     for source in list_indexed_sources(user_id=user_id):
         delete_source(source, user_id=user_id)
-    if user_data_dir.exists():
+    # exists() 후 rmtree() 사이의 TOCTOU를 피하려고 존재 검사 없이 바로 삭제하고,
+    # 디렉터리가 없던 경우만 무시한다.
+    try:
         shutil.rmtree(user_data_dir)
+    except FileNotFoundError:
+        pass
     delete_user_history(user_id)  # document_summaries도 함께 삭제됨
     clear_caches()
     with sqlite3.connect(USERS_DB_PATH) as conn:
