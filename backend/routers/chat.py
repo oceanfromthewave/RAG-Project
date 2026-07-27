@@ -34,12 +34,35 @@ router = APIRouter(tags=["chat"])
 
 
 def sanitize_selected_sources(selected_files: list[str], user_id: str) -> list[str]:
-    normalized = [normalize_source_name(name) for name in selected_files]
+    try:
+        normalized = [normalize_source_name(name) for name in selected_files]
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"잘못된 파일명입니다: {e}") from e
     allowed = set(list_indexed_sources(user_id=user_id))
     missing = [name for name in normalized if name not in allowed]
     if missing:
         raise HTTPException(status_code=400, detail=f"Unknown selected file: {missing[0]}")
     return normalized
+
+
+def resolve_session(question: Question, user_id: str) -> tuple[str, bool]:
+    """세션 ID를 확정하고 신규 여부를 돌려준다.
+
+    기존 세션이면 소유권을 확인하고, 없으면 질문 앞부분을 제목으로 새로 만든다.
+    ask / ask_stream 이 공유하던 중복 로직을 한곳으로 모은다.
+    """
+    if question.session_id:
+        owner = get_session_owner(question.session_id)
+        if owner and owner != user_id:
+            raise HTTPException(status_code=403, detail="이 세션에 접근할 권한이 없습니다.")
+        return question.session_id, False
+
+    title = (question.query[:30] + "...") if len(question.query) > 30 else question.query
+    session_id = create_session(
+        title=title, model=question.model,
+        user_id=user_id, workspace_id=question.workspace_id,
+    )
+    return session_id, True
 
 
 # ── 채팅 엔드포인트 ────────────────────────────────────────
@@ -50,17 +73,7 @@ def ask(request: Request, question: Question, current_user: UserInfo = Depends(g
     history_dicts = [m.model_dump() for m in question.history] if question.history else []
     selected_sources = sanitize_selected_sources(question.selected_files, current_user.id)
 
-    current_session_id = question.session_id
-    if not current_session_id:
-        title = (question.query[:30] + "...") if len(question.query) > 30 else question.query
-        current_session_id = create_session(
-            title=title, model=question.model,
-            user_id=current_user.id, workspace_id=question.workspace_id
-        )
-    else:
-        owner = get_session_owner(current_session_id)
-        if owner and owner != current_user.id:
-            raise HTTPException(status_code=403, detail="이 세션에 접근할 권한이 없습니다.")
+    current_session_id, _ = resolve_session(question, current_user.id)
 
     add_message(current_session_id, "user", question.query)
 
@@ -91,20 +104,7 @@ def ask_stream(request: Request, question: Question, current_user: UserInfo = De
     history_dicts = [m.model_dump() for m in question.history] if question.history else []
     selected_sources = sanitize_selected_sources(question.selected_files, current_user.id)
 
-    current_session_id = question.session_id
-    is_new_session = False
-
-    if not current_session_id:
-        temp_title = (question.query[:30] + "...") if len(question.query) > 30 else question.query
-        current_session_id = create_session(
-            title=temp_title, model=question.model,
-            user_id=current_user.id, workspace_id=question.workspace_id
-        )
-        is_new_session = True
-    else:
-        owner = get_session_owner(current_session_id)
-        if owner and owner != current_user.id:
-            raise HTTPException(status_code=403, detail="이 세션에 접근할 권한이 없습니다.")
+    current_session_id, is_new_session = resolve_session(question, current_user.id)
 
     add_message(current_session_id, "user", question.query)
 
@@ -156,13 +156,19 @@ def ask_stream(request: Request, question: Question, current_user: UserInfo = De
                             auto_title = generate_session_title(_query, _fc, model=_model)
                             if auto_title:
                                 update_session_title(_sid, auto_title)
-                        except Exception as _e:
-                            logger.warning(f"자동 제목 생성 실패: {_e}")
+                        except Exception:
+                            logger.warning("자동 제목 생성 실패", exc_info=True)
 
                     threading.Thread(target=_gen_title_bg, daemon=True).start()
 
-        except Exception as e:
-            logger.error(f"스트림 생성 오류: {e}", exc_info=True)
+        except Exception:
+            # 예외를 로그만 남기고 삼키면 클라이언트는 스트림이 이유 없이 끊긴 것으로 본다.
+            # NDJSON error 이벤트로 명시적으로 알린다.
+            logger.exception("스트림 생성 오류")
+            yield json.dumps(
+                {"type": "error", "message": "답변 생성 중 오류가 발생했습니다."},
+                ensure_ascii=False,
+            ) + "\n"
 
         finally:
             if not message_saved and (full_answer.strip() or meta):

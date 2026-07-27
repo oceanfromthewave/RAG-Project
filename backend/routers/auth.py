@@ -4,7 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 
 from backend.config import ALLOW_REGISTRATION
-from backend.core.security import get_client_ip, login_guard, login_limiter, register_limiter
+from backend.core.security import (
+    get_client_ip,
+    login_guard,
+    login_limiter,
+    password_change_limiter,
+    register_limiter,
+)
 from backend.schemas import PasswordChange
 from backend.services.auth import (
     Token,
@@ -67,9 +73,11 @@ def me(current_user: UserInfo = Depends(get_current_user)):
 
 @router.post("/change-password")
 def change_password_endpoint(
+        request: Request,
         body: PasswordChange,
         current_user: UserInfo = Depends(get_current_user),
 ):
+    password_change_limiter.check(request)
     try:
         change_password(current_user.id, body.old_password, body.new_password)
     except ValueError as exc:

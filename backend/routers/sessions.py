@@ -53,7 +53,9 @@ def get_session(session_id: str, current_user: UserInfo = Depends(get_current_us
 @router.delete("/sessions/{session_id}")
 def remove_session(session_id: str, current_user: UserInfo = Depends(get_current_user)):
     owner = get_session_owner(session_id)
-    if owner and owner != current_user.id:
+    if owner is None:
+        raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
+    if owner != current_user.id:
         raise HTTPException(status_code=403, detail="이 세션에 접근할 권한이 없습니다.")
     delete_session(session_id, user_id=current_user.id)
     return {"message": "Session deleted"}
@@ -77,7 +79,9 @@ def get_session_title(session_id: str, current_user: UserInfo = Depends(get_curr
 @router.patch("/sessions/{session_id}")
 def rename_session(session_id: str, update: SessionUpdate, current_user: UserInfo = Depends(get_current_user)):
     owner = get_session_owner(session_id)
-    if owner and owner != current_user.id:
+    if owner is None:
+        raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
+    if owner != current_user.id:
         raise HTTPException(status_code=403, detail="이 세션에 접근할 권한이 없습니다.")
     update_session_title(session_id, update.title, user_id=current_user.id)
     return {"message": "Session renamed"}

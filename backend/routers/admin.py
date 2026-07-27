@@ -53,18 +53,22 @@ def get_global_stats(admin: UserInfo = Depends(get_current_admin)):
 def delete_user_account(user_id: str, admin: UserInfo = Depends(get_current_admin)):
     if user_id == admin.id:
         raise HTTPException(status_code=400, detail="자기 자신은 삭제할 수 없습니다.")
+    # 파괴적 삭제(rmtree) 전에 반드시 존재 여부를 먼저 검증한다.
+    # 정규화되지 않은 id("../" 등)로 엉뚱한 디렉터리를 지우는 것을 막는다.
+    if not get_user_by_id(user_id):
+        raise HTTPException(status_code=404, detail="존재하지 않는 사용자입니다.")
     for source in list_indexed_sources(user_id=user_id):
         delete_source(source, user_id=user_id)
-    user_data_dir = DATA_DIR / user_id
-    if user_data_dir.exists():
+    # 경로가 DATA_DIR 하위인지 재확인(방어적) 후에만 삭제한다.
+    data_root = DATA_DIR.resolve()
+    user_data_dir = (DATA_DIR / user_id).resolve()
+    if user_data_dir != data_root and data_root in user_data_dir.parents and user_data_dir.exists():
         shutil.rmtree(user_data_dir)
     delete_user_history(user_id)  # document_summaries도 함께 삭제됨
     clear_caches()
     with sqlite3.connect(USERS_DB_PATH) as conn:
-        cursor = conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
         conn.commit()
-        if cursor.rowcount == 0:
-            raise HTTPException(status_code=404, detail="존재하지 않는 사용자입니다.")
     return {"message": "사용자가 삭제되었습니다."}
 
 

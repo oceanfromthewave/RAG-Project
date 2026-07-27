@@ -51,15 +51,15 @@ def build_upload_temp_path(source_name: str, user_id: str = "") -> Path:
     return DATA_DIR / f".upload-{prefix}{uuid4().hex}{Path(source_name).suffix}"
 
 
-def _run_summary_bg(source_name: str, text: str, user_id: str, model: str | None):
+def _run_summary_bg(source_name: str, text: str, user_id: str, model: str | None) -> None:
     """백그라운드 스레드에서 문서 요약 생성 후 DB에 저장한다."""
     try:
         summary = generate_document_summary(text, source_name, model=model)
         if summary:
             upsert_document_summary(source_name, user_id, summary)
-            logger.info(f"[Summary] '{source_name}' 요약 저장 완료 ({len(summary)}자)")
-    except Exception as e:
-        logger.warning(f"[Summary] '{source_name}' 요약 생성 실패: {e}")
+            logger.info("[Summary] '%s' 요약 저장 완료 (%d자)", source_name, len(summary))
+    except Exception:
+        logger.warning("[Summary] '%s' 요약 생성 실패", source_name, exc_info=True)
 
 
 # ── 파일 엔드포인트 ────────────────────────────────────────
@@ -90,7 +90,10 @@ async def upload(
 
         content_length = getattr(file, "size", 0) or 0
         if content_length > MAX_UPLOAD_SIZE:
-            results.append({"file": file.filename, "status": "error", "message": "용량 초과 (최대 10MB)"})
+            results.append({
+                "file": file.filename, "status": "error",
+                "message": f"용량 초과 (최대 {MAX_UPLOAD_SIZE // (1024 * 1024)}MB)",
+            })
             continue
 
         try:
@@ -120,9 +123,12 @@ async def upload(
                 daemon=True,
             ).start()
 
-        except Exception as error:
-            logger.error(f"Error uploading {file.filename}: {error}")
-            results.append({"file": file.filename, "status": "error", "message": str(error)})
+        except Exception:
+            logger.exception("파일 업로드 실패: %s", file.filename)
+            results.append({
+                "file": file.filename, "status": "error",
+                "message": "파일 처리 중 오류가 발생했습니다.",
+            })
         finally:
             if temp_path and temp_path.exists():
                 temp_path.unlink(missing_ok=True)
@@ -176,6 +182,8 @@ def get_files_from_db(current_user: UserInfo = Depends(get_current_user)):
             if metadatas and metadatas[0].get("tags"):
                 tags = metadatas[0]["tags"].split(",")
         except Exception:
+            # 조용히 넘어가면 벡터 DB 장애가 "청크 0개"로 위장된다. 최소한 로깅한다.
+            logger.warning("청크 메타데이터 조회 실패: %s", name, exc_info=True)
             chunk_count = 0
             tags = []
 
@@ -232,8 +240,12 @@ def delete_files_batch(names: list[str] = Query(...), current_user: UserInfo = D
                 results.append({"file": source_name, "status": "success"})
             else:
                 results.append({"file": source_name, "status": "not_found"})
-        except Exception as e:
-            results.append({"file": name, "status": "error", "message": str(e)})
+        except Exception:
+            logger.exception("파일 삭제 실패: %s", name)
+            results.append({
+                "file": name, "status": "error",
+                "message": "파일 삭제 중 오류가 발생했습니다.",
+            })
 
     clear_caches()
     return {"results": results}
@@ -270,8 +282,10 @@ async def reindex_file(name: str = Query(...), current_user: UserInfo = Depends(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Reindex error for {name}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("재인덱싱 실패: %s", name)
+        raise HTTPException(
+            status_code=500, detail="재인덱싱 중 오류가 발생했습니다."
+        ) from e
 
 
 @router.patch("/file/tags")

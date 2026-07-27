@@ -56,4 +56,20 @@ class PasswordChange(BaseModel):
 
 
 class FileTagsUpdate(BaseModel):
-    tags: list[str]
+    tags: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("tags")
+    @classmethod
+    def validate_tags(cls, value: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        for raw in value:
+            tag = raw.strip()
+            if not tag:
+                continue
+            if len(tag) > 40:
+                raise ValueError("각 태그는 40자를 넘을 수 없습니다.")
+            # 태그는 저장 시 쉼표로 join 되고 조회 시 split 되므로, 쉼표가 든 태그는 왕복 불일치를 일으킨다.
+            if "," in tag:
+                raise ValueError("태그에는 쉼표(,)를 포함할 수 없습니다.")
+            cleaned.append(tag)
+        return cleaned

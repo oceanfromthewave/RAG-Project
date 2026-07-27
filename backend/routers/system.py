@@ -111,5 +111,5 @@ def list_models(request: Request, current_user: UserInfo = Depends(get_current_u
 
         return {"models": sorted(model_list)}
     except Exception as error:
-        logger.error(f"모델 목록 조회 실패: {error}", exc_info=True)
+        logger.exception("모델 목록 조회 실패")
         raise HTTPException(status_code=500, detail="모델 목록을 가져오지 못했습니다.") from error
