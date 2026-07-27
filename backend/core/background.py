@@ -75,10 +75,11 @@ def submit_background(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> bool
         _ensure_started_locked()
         try:
             _queue.put_nowait((fn, args, kwargs))
-            return True
         except queue.Full:
             logger.warning("백그라운드 작업 포화 — %s 건너뜀", getattr(fn, "__name__", repr(fn)))
             return False
+        else:
+            return True
 
 
 def shutdown_background() -> None:
