@@ -232,6 +232,32 @@ def list_indexed_sources(user_id: str = "") -> list[str]:
     return sorted(sources)
 
 
+def get_sources_overview(user_id: str = "") -> dict[str, dict]:
+    """사용자의 모든 청크 메타데이터를 1회 조회해 소스별 청크 수·태그를 집계한다.
+
+    파일 목록(get_files_from_db)이 소스마다 collection.get 을 호출하던 N+1 을
+    단일 쿼리로 대체한다.
+    """
+    where_filter = {"user_id": user_id} if user_id else {}
+    metadatas = get_collection().get(where=where_filter, include=["metadatas"]).get("metadatas") or []
+
+    overview: dict[str, dict] = {}
+    for meta in metadatas:
+        if not meta:
+            continue
+        source = meta.get("source")
+        if not source:
+            continue
+        entry = overview.get(source)
+        if entry is None:
+            # 태그는 소스 내 모든 청크에 동일하게 기록되므로 첫 청크에서만 파싱한다.
+            tag_str = meta.get("tags") or ""
+            entry = {"chunks": 0, "tags": tag_str.split(",") if tag_str else []}
+            overview[source] = entry
+        entry["chunks"] += 1
+    return overview
+
+
 def index_document(source: str, text: str, user_id: str = "") -> int:
     chunks = chunk_text(text)
     collection = get_collection()
