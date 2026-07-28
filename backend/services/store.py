@@ -237,8 +237,13 @@ def get_sources_overview(user_id: str = "") -> dict[str, dict]:
 
     파일 목록(get_files_from_db)이 소스마다 collection.get 을 호출하던 N+1 을
     단일 쿼리로 대체한다.
+
+    user_id 가 비어 있으면 빈 결과를 반환한다 — 빈 필터로 전체 컬렉션을 훑어
+    다른 사용자의 메타데이터가 노출되는 것을 막는다.
     """
-    where_filter = {"user_id": user_id} if user_id else {}
+    if not user_id:
+        return {}
+    where_filter = {"user_id": user_id}
     metadatas = get_collection().get(where=where_filter, include=["metadatas"]).get("metadatas") or []
 
     overview: dict[str, dict] = {}
