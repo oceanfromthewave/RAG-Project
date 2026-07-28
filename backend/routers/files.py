@@ -20,7 +20,7 @@ from backend.services.store import (
     delete_source,
     get_collection,
     index_document,
-    list_indexed_sources,
+    get_sources_overview,
     normalize_source_name,
     read_document,
 )
@@ -160,44 +160,27 @@ def get_files(current_user: UserInfo = Depends(get_current_user)):
 
 @router.get("/files-db")
 def get_files_from_db(current_user: UserInfo = Depends(get_current_user)):
-    indexed_names = list_indexed_sources(user_id=current_user.id)
+    overview = get_sources_overview(user_id=current_user.id)
     user_data_dir = DATA_DIR / current_user.id
-    collection = get_collection()
     files_info = []
 
-    for name in indexed_names:
+    for name in sorted(overview):
+        entry = overview[name]
         path = user_data_dir / name
-        try:
-            chunk_res = collection.get(
-                where={"$and": [{"source": name}, {"user_id": current_user.id}]},
-                include=["metadatas"],
-            )
-            ids = chunk_res.get("ids") or []
-            chunk_count = len(ids)
-            metadatas = chunk_res.get("metadatas") or []
-            tags = []
-            if metadatas and metadatas[0].get("tags"):
-                tags = metadatas[0]["tags"].split(",")
-        except Exception:
-            # 조용히 넘어가면 벡터 DB 장애가 "청크 0개"로 위장된다. 최소한 로깅한다.
-            logger.warning("청크 메타데이터 조회 실패: %s", name, exc_info=True)
-            chunk_count = 0
-            tags = []
-
         if path.exists():
             stat = path.stat()
             files_info.append({
                 "name": name, "size": stat.st_size,
                 "updated_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-                "chunks": chunk_count, "tags": tags,
+                "chunks": entry["chunks"], "tags": entry["tags"],
             })
         else:
             files_info.append({
                 "name": name, "size": 0, "updated_at": None,
-                "chunks": chunk_count, "tags": tags,
+                "chunks": entry["chunks"], "tags": entry["tags"],
             })
 
-    return {"count": len(files_info), "files": sorted(files_info, key=lambda x: x["name"])}
+    return {"count": len(files_info), "files": files_info}
 
 
 @router.delete("/file")
