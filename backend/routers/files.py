@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import shutil
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -152,7 +152,10 @@ def get_files(current_user: UserInfo = Depends(get_current_user)):
             files_info.append({
                 "name": path.name,
                 "size": stat.st_size,
-                "updated_at": datetime.fromtimestamp(stat.st_mtime).isoformat()
+                "updated_at": datetime.fromtimestamp(
+                    stat.st_mtime,
+                    tz=timezone.utc,
+                ).isoformat(),
             })
 
     return {"count": len(files_info), "files": sorted(files_info, key=lambda x: x["name"])}
@@ -171,7 +174,7 @@ def get_files_from_db(current_user: UserInfo = Depends(get_current_user)):
             stat = path.stat()
             files_info.append({
                 "name": name, "size": stat.st_size,
-                "updated_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "updated_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
                 "chunks": entry["chunks"], "tags": entry["tags"],
             })
         else:
